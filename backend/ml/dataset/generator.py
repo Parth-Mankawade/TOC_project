@@ -1,421 +1,475 @@
-"""Synthetic workflow event log dataset generator.
+"""Synthetic order event log (GENERATE checkpoint).
 
-Generates 5,000 labelled order event traces for the dual-engine anomaly
-detection pipeline described in backend/docs/DATASET_SPEC.md.
+One row = one order (one case of an event log):
+  event_sequence    events in order, e.g. CONFIRM_PAYMENT;PACK_ITEMS;...
+  event_timestamps  one UTC timestamp per event
+  order_amount      order value
 
-Allocation (DATASET_SPEC.md Section 4.2):
-    NORMAL training       : 2,800 traces  (Isolation Forest training)
-    NORMAL testing        :   700 traces  (primary ML test, negative class)
-    STATISTICAL_ANOMALY   :   500 traces  (primary ML test, positive class)
-    RULE_VIOLATION        : 1,000 traces  (FSM benchmark, excluded from ML metrics)
-    ─────────────────────────────────────────────────────────────────────────
-    Total                 : 5,000 traces
+Every rule that produces data is a named parameter below, with the assumption
+behind it. The label of every row is set by the same function that built it.
 
-Authoritative source: backend/docs/DATASET_SPEC.md (v1.4, Approved)
+Three kinds of order:
+
+NORMAL
+  A random walk over the workflow automaton using the branch probabilities
+  below, log-normal waiting times between events, and a log-normal amount.
+
+STATISTICAL_ANOMALY: legal and complete, but suspicious. Five types, each built
+so that no single measurement gives it away (checked by
+backend/tests/test_dataset_generator.py with backend/ml/dataset/audit.py):
+  CARD_TESTING              2-6 failed payments retried a bit faster than people do, small amount
+  REPEATED_PAYMENT_FAILURE  2-6 failed payments at normal human pace and a normal amount
+  FAST_FULFILMENT           packing, shipping and delivery all about 2 standard deviations faster than normal
+  STALLED_DELIVERY          delivery takes about 9 days instead of about 3
+  HIGH_VALUE_QUICK_REFUND   a high amount refunded about 30 minutes after payment
+
+RULE_VIOLATION
+  A fulfilled order broken by one named edit that the workflow rules forbid
+  (VIOLATION_TYPES). Each edit is invalid by construction; the FSM check
+  afterwards only confirms the label, and a mismatch raises GenerateError.
+
+Splits are assigned here, before any model sees the data:
+  train       normal orders fit the unsupervised models; the anomaly rows are
+              used only by the supervised Random Forest comparison
+  validation  chooses between candidate models and sets decision thresholds
+  test        used once, for the final report
+
+The whole pipeline (generate, train, evaluate) runs with:
+    .venv\\Scripts\\python.exe -m backend.ml.pipeline
 """
 
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import math
 from pathlib import Path
 import random
-from typing import Dict, List, Optional
-import numpy as np
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
-# Reuse the validated FSM validator — do NOT duplicate FSM transition logic
+from backend.core.errors import GenerateError
+from backend.fsm.states import ALL_EVENTS, INITIAL_STATE, TERMINAL_STATES
+from backend.fsm.transitions import TRANSITION_TABLE
 from backend.fsm.validator import validate_trace
 
-# ---------------------------------------------------------------------------
-# Constants (DATASET_SPEC.md Section 4.2 & 4.3)
-# ---------------------------------------------------------------------------
+RANDOM_SEED = 42
 
-RANDOM_SEED: int = 42
+MINUTE = 60.0
+HOUR = 60 * MINUTE
+DAY = 24 * HOUR
 
-N_NORMAL_TRAIN: int = 2_800
-N_NORMAL_TEST: int = 700
-N_NORMAL_TOTAL: int = N_NORMAL_TRAIN + N_NORMAL_TEST          # 3,500
-N_STATISTICAL_ANOMALY: int = 500
-N_RULE_VIOLATION: int = 1_000
-TOTAL_TRACES: int = N_NORMAL_TOTAL + N_STATISTICAL_ANOMALY + N_RULE_VIOLATION  # 5,000
+DATA_DIR = Path(__file__).resolve().parent / "data"
+OUTPUT_CSV = DATA_DIR / "orders_event_log.csv"
 
-DATA_DIR: Path = Path(__file__).parent / "data"
-OUTPUT_CSV: Path = DATA_DIR / "orders_workflow_dataset.csv"
-
-# CSV column order (DATASET_SPEC.md Section 3.1)
-CSV_COLUMNS: List[str] = [
+CSV_COLUMNS = [
     "trace_id",
+    "split",
+    "anomaly_category",
+    "anomaly_type",
     "event_sequence",
-    "sequence_length",
+    "event_timestamps",
+    "order_amount",
     "is_rule_valid",
     "is_complete",
-    "anomaly_category",
-    "is_ml_anomaly",
 ]
 
-# Out-of-alphabet tokens used by the UNKNOWN mutation operator
-_UNKNOWN_TOKENS: List[str] = [
-    "HACK_CHECKOUT",
-    "BYPASS_GATEWAY",
-    "INJECT_DISCOUNT",
-    "SKIP_VERIFICATION",
-    "OVERRIDE_INVENTORY",
-    "ADMIN_FORCE_SHIP",
-    "MANUAL_CREDIT",
-    "BYPASS_AUTH_TOKEN",
-    "FORCE_CANCEL",
-    "SPOOF_DELIVERY",
+# ---------------------------------------------------------------------------
+# Size of each split
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SplitSize:
+    normal: int
+    per_anomaly_type: int
+    rule_violations: int
+
+
+SPLITS = ("train", "validation", "test")
+
+# Assumption: about 5% of completed orders are anomalous (5 types x 50 = 250 per
+# 5,000 normal test orders). Rare enough to look like a real review queue, and
+# still 50 test examples per type to measure each type's detection rate.
+SPLIT_SIZES: Dict[str, SplitSize] = {
+    "train": SplitSize(normal=4_000, per_anomaly_type=100, rule_violations=0),
+    "validation": SplitSize(normal=2_000, per_anomaly_type=20, rule_violations=0),
+    "test": SplitSize(normal=5_000, per_anomaly_type=50, rule_violations=500),
+}
+
+# Orders start at a random moment in this window.
+START_WINDOW_BEGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
+START_WINDOW_DAYS = 300
+
+# ---------------------------------------------------------------------------
+# Normal behaviour
+# ---------------------------------------------------------------------------
+
+Branch = List[Tuple[str, float]]
+
+# Assumption: 1 in 10 first card payments is declined; 1 in 20 customers leaves before paying.
+FIRST_PAYMENT: Branch = [("CONFIRM_PAYMENT", 0.85), ("FAIL_PAYMENT", 0.10), ("CANCEL_ORDER", 0.05)]
+# After a decline most people try again; a few are approved on the bank's re-check; some give up.
+AFTER_DECLINE: Branch = [("RETRY_PAYMENT", 0.75), ("CONFIRM_PAYMENT", 0.08), ("CANCEL_ORDER", 0.17)]
+# A card declined once is often declined again, so 2-3 failures also happen in ordinary orders.
+RETRY_ATTEMPT: Branch = [("CONFIRM_PAYMENT", 0.57), ("FAIL_PAYMENT", 0.35), ("CANCEL_ORDER", 0.08)]
+# Most paid orders are fulfilled; a few customers cancel and are refunded before shipping.
+AFTER_PAYMENT: Branch = [("PACK_ITEMS", 0.95), ("REFUND_ORDER", 0.05)]
+AFTER_PACKING: Branch = [("SHIP_ITEMS", 0.97), ("REFUND_ORDER", 0.03)]
+AFTER_SHIPPING: Branch = [("DELIVER_ITEMS", 1.0)]
+
+# Waiting time before an event, given the previous event: (median seconds, log-normal sigma).
+# A log-normal spread means times are always positive and occasionally much longer than usual.
+NORMAL_GAPS: Dict[Tuple[str, str], Tuple[float, float]] = {
+    # Payment, done by a person: re-entering card details takes about a minute.
+    ("FAIL_PAYMENT", "RETRY_PAYMENT"): (75.0, 0.8),
+    ("FAIL_PAYMENT", "CONFIRM_PAYMENT"): (3 * MINUTE, 0.8),   # bank approves on a re-check
+    ("FAIL_PAYMENT", "CANCEL_ORDER"): (10 * MINUTE, 1.0),
+    ("RETRY_PAYMENT", "CONFIRM_PAYMENT"): (45.0, 0.7),
+    ("RETRY_PAYMENT", "FAIL_PAYMENT"): (45.0, 0.7),
+    ("RETRY_PAYMENT", "CANCEL_ORDER"): (5 * MINUTE, 1.0),
+    # Fulfilment: packed within a working day, shipped the same day, delivered in about 3 days.
+    ("CONFIRM_PAYMENT", "PACK_ITEMS"): (8 * HOUR, 0.7),
+    ("CONFIRM_PAYMENT", "REFUND_ORDER"): (3 * HOUR, 1.2),     # change of mind: minutes to a day
+    ("PACK_ITEMS", "SHIP_ITEMS"): (5 * HOUR, 0.7),
+    ("PACK_ITEMS", "REFUND_ORDER"): (10 * HOUR, 0.9),
+    ("SHIP_ITEMS", "DELIVER_ITEMS"): (3 * DAY, 0.4),
+}
+
+# Median order value and log-normal spread: 90% of orders between about 320 and 4,500.
+NORMAL_AMOUNT: Tuple[float, float] = (1_200.0, 0.8)
+
+FULFILMENT = ["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"]
+
+# ---------------------------------------------------------------------------
+# Anomalies: each is legal and complete, and overlaps normal orders on every
+# single measurement; only the combination is unusual.
+# ---------------------------------------------------------------------------
+
+ANOMALY_TYPES = [
+    "CARD_TESTING",
+    "REPEATED_PAYMENT_FAILURE",
+    "FAST_FULFILMENT",
+    "STALLED_DELIVERY",
+    "HIGH_VALUE_QUICK_REFUND",
 ]
 
-_TERMINAL_STATES = {"DELIVERED", "CANCELLED", "REFUNDED"}
+# Card testing: a script tries stolen card numbers on a cheap order. It paces
+# itself close to human speed to avoid simple speed limits.
+CARD_TESTING_FAILURES = (2, 6)  # failed payments, inclusive
+CARD_TESTING_GAPS: Dict[Tuple[str, str], Tuple[float, float]] = {
+    ("FAIL_PAYMENT", "RETRY_PAYMENT"): (45.0, 0.5),    # people: 75 s
+    ("RETRY_PAYMENT", "FAIL_PAYMENT"): (35.0, 0.5),    # people: 45 s
+    ("RETRY_PAYMENT", "CONFIRM_PAYMENT"): (35.0, 0.5),
+    ("FAIL_PAYMENT", "CANCEL_ORDER"): (45.0, 0.5),     # people: 10 min
+}
+CARD_TESTING_CANCEL_SHARE = 0.5  # half give up; half find a working card and get the order fulfilled
+CARD_TESTING_AMOUNT: Tuple[float, float] = (250.0, 0.6)
+
+# Repeated failure: a person (or an account takeover) keeps failing at normal pace.
+REPEATED_FAILURE_FAILURES = (2, 6)
+REPEATED_FAILURE_CANCEL_SHARE = 0.4
+
+# Fast fulfilment: steps marked done faster than a real warehouse and courier work,
+# e.g. a seller faking fulfilment to release payment early. Each median is about
+# 2 normal standard deviations faster than the normal median (8 h -> 2 h,
+# 5 h -> 1.2 h, 3 days -> 1.35 days), so each step alone still looks possible.
+FAST_FULFILMENT_GAPS: Dict[Tuple[str, str], Tuple[float, float]] = {
+    ("CONFIRM_PAYMENT", "PACK_ITEMS"): (2 * HOUR, 0.5),
+    ("PACK_ITEMS", "SHIP_ITEMS"): (1.2 * HOUR, 0.5),
+    ("SHIP_ITEMS", "DELIVER_ITEMS"): (1.35 * DAY, 0.3),
+}
+
+# Stalled delivery: the parcel sits with the courier; overlaps the slow end of normal deliveries.
+STALLED_DELIVERY_GAP: Tuple[float, float] = (9 * DAY, 0.35)
+
+# High-value quick refund: a large order paid and refunded soon after (refund abuse).
+HIGH_VALUE_REFUND_AMOUNT: Tuple[float, float] = (4_500.0, 0.35)   # top ~5% of normal amounts
+HIGH_VALUE_REFUND_GAP: Tuple[float, float] = (30 * MINUTE, 0.8)   # normal refunds: about 3 h
+HIGH_VALUE_REFUND_AFTER_PACKING_SHARE = 0.3
+
+# ---------------------------------------------------------------------------
+# Rule violations
+# ---------------------------------------------------------------------------
+
+VIOLATION_TYPES = [
+    "MISSING_PAYMENT",   # packed and shipped without a payment
+    "SKIPPED_STEP",      # packing or shipping left out
+    "WRONG_ORDER",       # two adjacent steps swapped
+    "DUPLICATE_EVENT",   # payment, packing or shipping logged twice
+    "EVENT_AFTER_END",   # something happens after delivery
+    "UNKNOWN_EVENT",     # an event outside the workflow's alphabet
+]
+UNKNOWN_EVENTS = [
+    "HACK_CHECKOUT", "BYPASS_GATEWAY", "INJECT_DISCOUNT", "SKIP_VERIFICATION",
+    "ADMIN_FORCE_SHIP", "MANUAL_CREDIT", "SPOOF_DELIVERY",
+]
+INSERTED_EVENT_GAP = (1.0, 120.0)        # seconds (uniform): an extra event logged shortly after another
+EVENT_AFTER_END_GAP = (1 * HOUR, 2 * DAY)  # seconds (uniform)
+
+_KNOWN_EVENTS = sorted(ALL_EVENTS)
 
 
-# ===========================================================================
-# 1. NORMAL trace generator
-#    Specification: DATASET_SPEC.md Section 4.1, Subsection 1
-# ===========================================================================
+@dataclass
+class GeneratedOrder:
+    events: List[str]
+    gaps: List[float]  # seconds before each event; gaps[0] is not used
+    amount: float
+    category: str
+    anomaly_type: str
 
-def _generate_normal_trace() -> List[str]:
-    """Simulate a single random walk on the FSM transition graph.
 
-    Branch probabilities are taken verbatim from DATASET_SPEC.md Section 4.1:
+# ---------------------------------------------------------------------------
+# Sampling helpers
+# ---------------------------------------------------------------------------
 
-    At ORDER_CREATED (retry_count == 0):
-        85 %  CONFIRM_PAYMENT  →  PAID
-        10 %  CANCEL_ORDER     →  CANCELLED  (terminal)
-         5 %  FAIL_PAYMENT     →  PAYMENT_FAILED
+def _lognormal(rng: random.Random, median: float, sigma: float) -> float:
+    return rng.lognormvariate(math.log(median), sigma)
 
-    At PAYMENT_FAILED:
-        80 %  RETRY_PAYMENT    →  ORDER_CREATED  (retry_count becomes 1)
-        20 %  CANCEL_ORDER     →  CANCELLED      (terminal)
 
-    At ORDER_CREATED (retry_count >= 1):  FAIL_PAYMENT branch disabled
-        90 %  CONFIRM_PAYMENT  →  PAID
-        10 %  CANCEL_ORDER     →  CANCELLED  (terminal)
+def _choose(rng: random.Random, options: Branch) -> str:
+    r = rng.random()
+    cumulative = 0.0
+    for event, p in options:
+        cumulative += p
+        if r < cumulative:
+            return event
+    return options[-1][0]  # r is within floating-point rounding of 1.0
 
-    At PAID:
-        95 %  PACK_ITEMS   →  PACKED
-         5 %  REFUND_ORDER →  REFUNDED  (terminal)
 
-    At PACKED:
-        97 %  SHIP_ITEMS   →  SHIPPED
-         3 %  REFUND_ORDER →  REFUNDED  (terminal)
+def _gap(rng: random.Random, previous: str, event: str,
+         table: Mapping[Tuple[str, str], Tuple[float, float]]) -> float:
+    if (previous, event) in table:
+        return _lognormal(rng, *table[(previous, event)])
+    return _lognormal(rng, *NORMAL_GAPS[(previous, event)])
 
-    At SHIPPED:
-       100 %  DELIVER_ITEMS →  DELIVERED  (terminal)
 
-    Returns:
-        A list of event strings: FSM-valid, terminates at a terminal state,
-        and contains at most one RETRY_PAYMENT.
+def _gaps(rng: random.Random, events: Sequence[str],
+          table: Mapping[Tuple[str, str], Tuple[float, float]] = NORMAL_GAPS) -> List[float]:
+    return [0.0] + [_gap(rng, a, b, table) for a, b in zip(events, events[1:])]
+
+
+def check_label(events: Sequence[str], category: str) -> Dict[str, Any]:
+    """Confirm that the FSM agrees with the label a generator gave an order.
+
+    Raises:
+        GenerateError: A RULE_VIOLATION the FSM accepts, or any other label on an
+            order the FSM rejects or that is not complete.
     """
+    result = validate_trace(list(events))
+    if category == "RULE_VIOLATION":
+        if result["is_valid"]:
+            raise GenerateError("an order the FSM rejects (label RULE_VIOLATION)", "an FSM-valid order", list(events))
+    elif not (result["is_valid"] and result["is_complete"]):
+        raise GenerateError(
+            f"a valid, complete order (label {category})",
+            f"is_valid={result['is_valid']}, is_complete={result['is_complete']}",
+            list(events),
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Normal orders
+# ---------------------------------------------------------------------------
+
+def _normal_events(rng: random.Random) -> List[str]:
+    branches = {"PAYMENT_FAILED": AFTER_DECLINE, "PAID": AFTER_PAYMENT,
+                "PACKED": AFTER_PACKING, "SHIPPED": AFTER_SHIPPING}
     events: List[str] = []
-    state: str = "ORDER_CREATED"
-    retry_count: int = 0
-
-    while state not in _TERMINAL_STATES:
-        r = random.random()
-
-        if state == "ORDER_CREATED":
-            if retry_count == 0:
-                if r < 0.85:
-                    events.append("CONFIRM_PAYMENT")
-                    state = "PAID"
-                elif r < 0.95:                  # 0.85 + 0.10 = 0.95
-                    events.append("CANCEL_ORDER")
-                    state = "CANCELLED"
-                else:                           # 0.95 to 1.00 (5 %)
-                    events.append("FAIL_PAYMENT")
-                    state = "PAYMENT_FAILED"
-            else:
-                # retry_count >= 1: FAIL_PAYMENT disabled
-                if r < 0.90:
-                    events.append("CONFIRM_PAYMENT")
-                    state = "PAID"
-                else:
-                    events.append("CANCEL_ORDER")
-                    state = "CANCELLED"
-
-        elif state == "PAYMENT_FAILED":
-            if r < 0.80:
-                events.append("RETRY_PAYMENT")
-                state = "ORDER_CREATED"
-                retry_count += 1
-            else:
-                events.append("CANCEL_ORDER")
-                state = "CANCELLED"
-
-        elif state == "PAID":
-            if r < 0.95:
-                events.append("PACK_ITEMS")
-                state = "PACKED"
-            else:
-                events.append("REFUND_ORDER")
-                state = "REFUNDED"
-
-        elif state == "PACKED":
-            if r < 0.97:
-                events.append("SHIP_ITEMS")
-                state = "SHIPPED"
-            else:
-                events.append("REFUND_ORDER")
-                state = "REFUNDED"
-
-        elif state == "SHIPPED":
-            events.append("DELIVER_ITEMS")
-            state = "DELIVERED"
-
+    state = INITIAL_STATE.value
+    failures = 0
+    while state not in TERMINAL_STATES:
+        if state == INITIAL_STATE.value:
+            options = FIRST_PAYMENT if failures == 0 else RETRY_ATTEMPT
+        else:
+            options = branches[state]
+        event = _choose(rng, options)
+        events.append(event)
+        failures += event == "FAIL_PAYMENT"
+        state = TRANSITION_TABLE[(state, event)]
     return events
 
 
-def generate_normal_traces(n: int) -> List[List[str]]:
-    """Return a list of n independently generated NORMAL event traces."""
-    traces: List[List[str]] = []
-    for _ in range(n):
-        trace = _generate_normal_trace()
-        traces.append(trace)
-    return traces
+def generate_normal_order(rng: random.Random) -> GeneratedOrder:
+    events = _normal_events(rng)
+    return GeneratedOrder(events, _gaps(rng, events), _lognormal(rng, *NORMAL_AMOUNT), "NORMAL", "NONE")
 
 
-# ===========================================================================
-# 2. STATISTICAL_ANOMALY trace generator
-#    Specification: DATASET_SPEC.md Section 4.1, Subsection 3
-# ===========================================================================
+# ---------------------------------------------------------------------------
+# Statistical anomalies
+# ---------------------------------------------------------------------------
 
-def _generate_anomaly_trace() -> List[str]:
-    """Generate one STATISTICAL_ANOMALY trace.
-
-    Algorithm (DATASET_SPEC.md Section 4.1, Subsection 3):
-      1. Sample k in {3, 4, 5, 6} uniformly at random.
-      2. For each cycle, append FAIL_PAYMENT followed by RETRY_PAYMENT.
-      3. Terminate via either:
-         - Successful fulfillment: CONFIRM_PAYMENT -> PACK_ITEMS -> SHIP_ITEMS -> DELIVER_ITEMS
-         - Valid cancellation: CANCEL_ORDER
-    """
-    k: int = random.randint(3, 6)
-    events: List[str] = []
-
-    for _ in range(k):
-        events.append("FAIL_PAYMENT")
-        events.append("RETRY_PAYMENT")
-
-    if random.random() < 0.5:
-        events.extend(["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"])
+def _failure_loop(rng: random.Random, failures: Tuple[int, int], cancel_share: float) -> List[str]:
+    """k x (FAIL, RETRY), then either give up after the last failure or pay and get the order fulfilled."""
+    events = ["FAIL_PAYMENT", "RETRY_PAYMENT"] * rng.randint(*failures)
+    if rng.random() < cancel_share:
+        events[-1] = "CANCEL_ORDER"
     else:
-        events.append("CANCEL_ORDER")
-
+        events += FULFILMENT
     return events
 
 
-def generate_anomaly_traces(n: int) -> List[List[str]]:
-    """Return a list of n STATISTICAL_ANOMALY event traces."""
-    return [_generate_anomaly_trace() for _ in range(n)]
+def _card_testing(rng: random.Random) -> GeneratedOrder:
+    events = _failure_loop(rng, CARD_TESTING_FAILURES, CARD_TESTING_CANCEL_SHARE)
+    return GeneratedOrder(events, _gaps(rng, events, CARD_TESTING_GAPS),
+                          _lognormal(rng, *CARD_TESTING_AMOUNT), "STATISTICAL_ANOMALY", "CARD_TESTING")
 
 
-# ===========================================================================
-# 3. RULE_VIOLATION trace generator
-#    Specification: DATASET_SPEC.md Section 4.1, Subsection 2
-# ===========================================================================
-
-def _build_violation_pool() -> List[List[str]]:
-    """Build a rich deterministic pool of candidate rule-violation sequences.
-
-    Applies the six mutation operators from DATASET_SPEC.md Section 4.1.2:
-      1. DROP: Remove prerequisite step (e.g., skip packing, ship directly).
-      2. SWAP: Swap order of two events (e.g., ship before pack).
-      3. PREMATURE: Premature action at start (e.g., deliver before payment).
-      4. POST_TERMINAL: Event executed after terminal state (zombie mutation).
-      5. DUPLICATE: Duplicate event without self-loop (e.g., double confirm).
-      6. UNKNOWN: Inject out-of-alphabet event symbol.
-    """
-    pool: List[List[str]] = []
-
-    # 1. DROP Operator
-    pool.append(["CONFIRM_PAYMENT", "SHIP_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["FAIL_PAYMENT", "RETRY_PAYMENT", "CONFIRM_PAYMENT", "SHIP_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["SHIP_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["DELIVER_ITEMS"])
-    pool.append(["PACK_ITEMS", "REFUND_ORDER"])
-    pool.append(["CONFIRM_PAYMENT", "SHIP_ITEMS"])
-
-    # 2. SWAP Operator
-    pool.append(["CONFIRM_PAYMENT", "SHIP_ITEMS", "PACK_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["FAIL_PAYMENT", "RETRY_PAYMENT", "CONFIRM_PAYMENT", "SHIP_ITEMS", "PACK_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["PACK_ITEMS", "CONFIRM_PAYMENT", "SHIP_ITEMS", "DELIVER_ITEMS"])
-    pool.append(["DELIVER_ITEMS", "CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS"])
-    pool.append(["SHIP_ITEMS", "CONFIRM_PAYMENT", "PACK_ITEMS", "DELIVER_ITEMS"])
-
-    # 3. PREMATURE Operator
-    pool.append(["DELIVER_ITEMS", "CONFIRM_PAYMENT"])
-    pool.append(["SHIP_ITEMS", "CONFIRM_PAYMENT"])
-    pool.append(["PACK_ITEMS"])
-    pool.append(["SHIP_ITEMS"])
-    pool.append(["REFUND_ORDER"])
-    pool.append(["DELIVER_ITEMS", "CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS"])
-    pool.append(["SHIP_ITEMS", "PACK_ITEMS", "CONFIRM_PAYMENT"])
-
-    # 4. POST_TERMINAL Operator
-    terminal_bases = [
-        ["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"],
-        ["CANCEL_ORDER"],
-        ["FAIL_PAYMENT", "CANCEL_ORDER"],
-        ["CONFIRM_PAYMENT", "REFUND_ORDER"],
-        ["CONFIRM_PAYMENT", "PACK_ITEMS", "REFUND_ORDER"],
-    ]
-    post_events = [
-        "CANCEL_ORDER", "CONFIRM_PAYMENT", "PACK_ITEMS",
-        "SHIP_ITEMS", "DELIVER_ITEMS", "REFUND_ORDER",
-        "FAIL_PAYMENT", "RETRY_PAYMENT",
-    ]
-    for base in terminal_bases:
-        for ev in post_events:
-            pool.append(base + [ev])
-
-    # 5. DUPLICATE Operator
-    dup_cases = [
-        (["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"], "CONFIRM_PAYMENT"),
-        (["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"], "PACK_ITEMS"),
-        (["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"], "SHIP_ITEMS"),
-        (["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"], "DELIVER_ITEMS"),
-        (["CANCEL_ORDER"], "CANCEL_ORDER"),
-        (["CONFIRM_PAYMENT", "REFUND_ORDER"], "REFUND_ORDER"),
-        (["CONFIRM_PAYMENT", "PACK_ITEMS", "REFUND_ORDER"], "PACK_ITEMS"),
-        (["CONFIRM_PAYMENT", "PACK_ITEMS", "REFUND_ORDER"], "REFUND_ORDER"),
-        (["FAIL_PAYMENT", "RETRY_PAYMENT", "CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"], "CONFIRM_PAYMENT"),
-        (["FAIL_PAYMENT", "RETRY_PAYMENT", "CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"], "PACK_ITEMS"),
-        (["FAIL_PAYMENT", "RETRY_PAYMENT"], "FAIL_PAYMENT"),
-    ]
-    for base, event in dup_cases:
-        idx = base.index(event)
-        mutated = base[:idx + 1] + [event] + base[idx + 1:]
-        pool.append(mutated)
-
-    # 6. UNKNOWN Operator
-    unknown_bases = [
-        ["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"],
-        ["CANCEL_ORDER"],
-        ["CONFIRM_PAYMENT", "REFUND_ORDER"],
-        ["FAIL_PAYMENT", "RETRY_PAYMENT", "CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"],
-    ]
-    for token in _UNKNOWN_TOKENS:
-        pool.append([token])
-        for base in unknown_bases:
-            pool.append(base[:1] + [token] + base[1:])
-            pool.append([token] + base)
-
-    return pool
+def _repeated_payment_failure(rng: random.Random) -> GeneratedOrder:
+    events = _failure_loop(rng, REPEATED_FAILURE_FAILURES, REPEATED_FAILURE_CANCEL_SHARE)
+    return GeneratedOrder(events, _gaps(rng, events), _lognormal(rng, *NORMAL_AMOUNT),
+                          "STATISTICAL_ANOMALY", "REPEATED_PAYMENT_FAILURE")
 
 
-def generate_rule_violation_traces(n: int) -> List[List[str]]:
-    """Generate n RULE_VIOLATION event traces.
-
-    All traces are guaranteed to fail validate_trace().
-    """
-    candidate_pool = _build_violation_pool()
-
-    # Defensive validation using existing FSM validator
-    verified_pool = [
-        seq for seq in candidate_pool
-        if not validate_trace(seq)["is_valid"]
-    ]
-
-    if not verified_pool:
-        raise RuntimeError("No RULE_VIOLATION candidates survived FSM verification.")
-
-    return [random.choice(verified_pool) for _ in range(n)]
+def _fast_fulfilment(rng: random.Random) -> GeneratedOrder:
+    events = list(FULFILMENT)
+    return GeneratedOrder(events, _gaps(rng, events, FAST_FULFILMENT_GAPS), _lognormal(rng, *NORMAL_AMOUNT),
+                          "STATISTICAL_ANOMALY", "FAST_FULFILMENT")
 
 
-# ===========================================================================
-# 4. Dataset Assembly & CSV Export
-# ===========================================================================
+def _stalled_delivery(rng: random.Random) -> GeneratedOrder:
+    events = list(FULFILMENT)
+    table = {("SHIP_ITEMS", "DELIVER_ITEMS"): STALLED_DELIVERY_GAP}
+    return GeneratedOrder(events, _gaps(rng, events, table), _lognormal(rng, *NORMAL_AMOUNT),
+                          "STATISTICAL_ANOMALY", "STALLED_DELIVERY")
 
-def generate_dataset(output_path: Optional[Path] = None) -> Path:
-    """Assemble and persist the complete 5,000-trace labelled dataset.
 
-    Seeding behaviour (DATASET_SPEC.md Section 4.3):
-        Both Python's built-in `random` and NumPy's `numpy.random` are
-        seeded with RANDOM_SEED (42).
+def _high_value_quick_refund(rng: random.Random) -> GeneratedOrder:
+    if rng.random() < HIGH_VALUE_REFUND_AFTER_PACKING_SHARE:
+        events = ["CONFIRM_PAYMENT", "PACK_ITEMS", "REFUND_ORDER"]
+    else:
+        events = ["CONFIRM_PAYMENT", "REFUND_ORDER"]
+    table = {(events[-2], "REFUND_ORDER"): HIGH_VALUE_REFUND_GAP}
+    return GeneratedOrder(events, _gaps(rng, events, table), _lognormal(rng, *HIGH_VALUE_REFUND_AMOUNT),
+                          "STATISTICAL_ANOMALY", "HIGH_VALUE_QUICK_REFUND")
 
-    Rows:
-        1 to 3,500   : NORMAL traces (first 2,800 train, next 700 test)
-        3,501 to 4,000: STATISTICAL_ANOMALY traces
-        4,001 to 5,000: RULE_VIOLATION traces
-    """
-    random.seed(RANDOM_SEED)
-    np.random.seed(RANDOM_SEED)
 
+ANOMALY_GENERATORS: Dict[str, Callable[[random.Random], GeneratedOrder]] = {
+    "CARD_TESTING": _card_testing,
+    "REPEATED_PAYMENT_FAILURE": _repeated_payment_failure,
+    "FAST_FULFILMENT": _fast_fulfilment,
+    "STALLED_DELIVERY": _stalled_delivery,
+    "HIGH_VALUE_QUICK_REFUND": _high_value_quick_refund,
+}
+
+# ---------------------------------------------------------------------------
+# Rule violations: one forbidden edit of a fulfilled order
+# ---------------------------------------------------------------------------
+
+def _inserted_gap(rng: random.Random) -> float:
+    return rng.uniform(*INSERTED_EVENT_GAP)
+
+
+def _remove(events: List[str], gaps: List[float], i: int) -> None:
+    """Drop event i; the time before it is added to the next event so timestamps keep increasing."""
+    if i + 1 < len(events):
+        gaps[i + 1] += gaps[i]
+    del events[i], gaps[i]
+    gaps[0] = 0.0
+
+
+def generate_rule_violation(rng: random.Random) -> GeneratedOrder:
+    events = list(FULFILMENT)
+    gaps = _gaps(rng, events)
+    violation = rng.choice(VIOLATION_TYPES)
+    if violation == "MISSING_PAYMENT":
+        _remove(events, gaps, 0)                       # PACK_ITEMS straight from ORDER_CREATED
+    elif violation == "SKIPPED_STEP":
+        _remove(events, gaps, rng.choice([1, 2]))      # no packing, or no shipping
+    elif violation == "WRONG_ORDER":
+        i = rng.choice([0, 1, 2])                      # swap events i and i+1
+        events[i], events[i + 1] = events[i + 1], events[i]
+    elif violation == "DUPLICATE_EVENT":
+        i = rng.choice([0, 1, 2])                      # CONFIRM, PACK or SHIP logged twice
+        events.insert(i + 1, events[i])
+        gaps.insert(i + 1, _inserted_gap(rng))
+    elif violation == "EVENT_AFTER_END":
+        events.append(rng.choice(_KNOWN_EVENTS))
+        gaps.append(rng.uniform(*EVENT_AFTER_END_GAP))
+    else:  # UNKNOWN_EVENT, before the last event so the order has not ended yet
+        i = rng.randrange(len(events))
+        events.insert(i, rng.choice(UNKNOWN_EVENTS))
+        gaps.insert(i, _inserted_gap(rng))
+        gaps[0] = 0.0
+    return GeneratedOrder(events, gaps, _lognormal(rng, *NORMAL_AMOUNT), "RULE_VIOLATION", violation)
+
+
+# ---------------------------------------------------------------------------
+# Assembly
+# ---------------------------------------------------------------------------
+
+def _timestamps(rng: random.Random, gaps: Sequence[float]) -> List[datetime]:
+    """Whole-second UTC timestamps; every gap is at least 1 second so times strictly increase."""
+    t = START_WINDOW_BEGIN + timedelta(seconds=round(rng.uniform(0, START_WINDOW_DAYS * DAY)))
+    stamps = [t]
+    for gap in gaps[1:]:
+        t = t + timedelta(seconds=max(1, round(gap)))
+        stamps.append(t)
+    return stamps
+
+
+def format_timestamp(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _check_sizes(sizes: Mapping[str, SplitSize]) -> None:
+    if set(sizes) != set(SPLITS):
+        raise GenerateError(f"split sizes for exactly {list(SPLITS)}", sorted(sizes), "sizes")
+    for split, size in sizes.items():
+        for field in ("normal", "per_anomaly_type", "rule_violations"):
+            value = getattr(size, field)
+            if not isinstance(value, int) or value < 0:
+                raise GenerateError("a whole number >= 0", value, f"sizes[{split!r}].{field}")
+
+
+def _check_branches() -> None:
+    for name, branch in [("FIRST_PAYMENT", FIRST_PAYMENT), ("AFTER_DECLINE", AFTER_DECLINE),
+                         ("RETRY_ATTEMPT", RETRY_ATTEMPT), ("AFTER_PAYMENT", AFTER_PAYMENT),
+                         ("AFTER_PACKING", AFTER_PACKING), ("AFTER_SHIPPING", AFTER_SHIPPING)]:
+        total = sum(p for _, p in branch)
+        if abs(total - 1.0) > 1e-9:
+            raise GenerateError("branch probabilities that sum to 1", total, name)
+
+
+def generate_orders(seed: int = RANDOM_SEED,
+                    sizes: Mapping[str, SplitSize] = SPLIT_SIZES) -> List[Tuple[str, GeneratedOrder, List[datetime]]]:
+    """All orders as (split, order, timestamps), in a fixed order for a given seed."""
+    _check_sizes(sizes)
+    _check_branches()
+    rng = random.Random(seed)
+    plan: List[Tuple[str, GeneratedOrder]] = []
+    for split in SPLITS:
+        size = sizes[split]
+        plan += [(split, generate_normal_order(rng)) for _ in range(size.normal)]
+        for anomaly_type in ANOMALY_TYPES:
+            make = ANOMALY_GENERATORS[anomaly_type]
+            plan += [(split, make(rng)) for _ in range(size.per_anomaly_type)]
+        plan += [(split, generate_rule_violation(rng)) for _ in range(size.rule_violations)]
+    return [(split, order, _timestamps(rng, order.gaps)) for split, order in plan]
+
+
+def generate_dataset(output_path: Optional[Union[str, Path]] = None, seed: int = RANDOM_SEED,
+                     sizes: Mapping[str, SplitSize] = SPLIT_SIZES) -> Path:
+    """Generate every order, confirm each label with the FSM, and write the CSV."""
     target = Path(output_path) if output_path else OUTPUT_CSV
+    rows = []
+    for idx, (split, order, stamps) in enumerate(generate_orders(seed, sizes), start=1):
+        check = check_label(order.events, order.category)
+        rows.append({
+            "trace_id": f"ORD_{idx:05d}",
+            "split": split,
+            "anomaly_category": order.category,
+            "anomaly_type": order.anomaly_type,
+            "event_sequence": ";".join(order.events),
+            "event_timestamps": ";".join(format_timestamp(t) for t in stamps),
+            "order_amount": f"{order.amount:.2f}",
+            "is_rule_valid": check["is_valid"],
+            "is_complete": check["is_complete"],
+        })
     target.parent.mkdir(parents=True, exist_ok=True)
-
-    rows: List[Dict] = []
-    counter: int = 1
-
-    # 1. NORMAL traces (3,500 = 2,800 train + 700 test)
-    for events in generate_normal_traces(N_NORMAL_TOTAL):
-        trace_id = f"TRACE_{counter:05d}"
-        val_res = validate_trace(events)
-        if not val_res["is_valid"] or not val_res["is_complete"]:
-            raise RuntimeError(
-                f"Generated NORMAL trace {trace_id} failed validation or is incomplete: "
-                f"is_valid={val_res['is_valid']}, is_complete={val_res['is_complete']}, "
-                f"error={val_res.get('error')}. Trace: {events}"
-            )
-        rows.append({
-            "trace_id": trace_id,
-            "event_sequence": ";".join(events),
-            "sequence_length": len(events),
-            "is_rule_valid": val_res["is_valid"],
-            "is_complete": val_res["is_complete"],
-            "anomaly_category": "NORMAL",
-            "is_ml_anomaly": False,
-        })
-        counter += 1
-
-    # 2. STATISTICAL_ANOMALY traces (500)
-    for events in generate_anomaly_traces(N_STATISTICAL_ANOMALY):
-        trace_id = f"TRACE_{counter:05d}"
-        val_res = validate_trace(events)
-        if not val_res["is_valid"] or not val_res["is_complete"]:
-            raise RuntimeError(
-                f"Generated STATISTICAL_ANOMALY trace {trace_id} failed validation or is incomplete: "
-                f"is_valid={val_res['is_valid']}, is_complete={val_res['is_complete']}, "
-                f"error={val_res.get('error')}. Trace: {events}"
-            )
-        rows.append({
-            "trace_id": trace_id,
-            "event_sequence": ";".join(events),
-            "sequence_length": len(events),
-            "is_rule_valid": val_res["is_valid"],
-            "is_complete": val_res["is_complete"],
-            "anomaly_category": "STATISTICAL_ANOMALY",
-            "is_ml_anomaly": True,
-        })
-        counter += 1
-
-    # 3. RULE_VIOLATION traces (1,000)
-    for events in generate_rule_violation_traces(N_RULE_VIOLATION):
-        rows.append({
-            "trace_id": f"TRACE_{counter:05d}",
-            "event_sequence": ";".join(events),
-            "sequence_length": len(events),
-            "is_rule_valid": False,
-            "is_complete": False,
-            "anomaly_category": "RULE_VIOLATION",
-            "is_ml_anomaly": "",  # null / empty string for rule violations
-        })
-        counter += 1
-
     with open(target, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS)
+        writer = csv.DictWriter(fh, fieldnames=CSV_COLUMNS, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
-
     return target
-
-
-if __name__ == "__main__":
-    output = generate_dataset()
-    print(f"Dataset generated at: {output}")
-    print(f"Total traces: {TOTAL_TRACES}")
-    print(f"  NORMAL: {N_NORMAL_TOTAL} (train={N_NORMAL_TRAIN}, test={N_NORMAL_TEST})")
-    print(f"  STATISTICAL_ANOMALY: {N_STATISTICAL_ANOMALY}")
-    print(f"  RULE_VIOLATION: {N_RULE_VIOLATION}")

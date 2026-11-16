@@ -1,2 +1,1 @@
-"""Machine Learning module for statistical anomaly detection using Isolation Forest."""
-
+"""Machine learning: synthetic data, the Markov chain path model, the timing-and-amount model, evaluation."""

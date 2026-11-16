@@ -1,0 +1,411 @@
+{
+  "dataset": {
+    "orders_by_split": {
+      "train": {
+        "NORMAL": 4000,
+        "STATISTICAL_ANOMALY": 500
+      },
+      "validation": {
+        "NORMAL": 2000,
+        "STATISTICAL_ANOMALY": 100
+      },
+      "test": {
+        "NORMAL": 5000,
+        "RULE_VIOLATION": 500,
+        "STATISTICAL_ANOMALY": 250
+      }
+    },
+    "anomaly_types": [
+      "CARD_TESTING",
+      "REPEATED_PAYMENT_FAILURE",
+      "FAST_FULFILMENT",
+      "STALLED_DELIVERY",
+      "HIGH_VALUE_QUICK_REFUND"
+    ],
+    "test_anomaly_share": 0.0476
+  },
+  "separability": {
+    "false_alarm_budget": 0.01,
+    "trivial_if_recall_at_least": 0.9,
+    "by_type": {
+      "CARD_TESTING": {
+        "measurement": "payment_failures",
+        "side": "high",
+        "recall": 0.7882,
+        "anomalies": 170
+      },
+      "FAST_FULFILMENT": {
+        "measurement": "SHIP_ITEMS -> DELIVER_ITEMS",
+        "side": "low",
+        "recall": 0.3706,
+        "anomalies": 170
+      },
+      "HIGH_VALUE_QUICK_REFUND": {
+        "measurement": "CONFIRM_PAYMENT -> REFUND_ORDER",
+        "side": "low",
+        "recall": 0.5706,
+        "anomalies": 170
+      },
+      "REPEATED_PAYMENT_FAILURE": {
+        "measurement": "payment_failures",
+        "side": "high",
+        "recall": 0.8118,
+        "anomalies": 170
+      },
+      "STALLED_DELIVERY": {
+        "measurement": "SHIP_ITEMS -> DELIVER_ITEMS",
+        "side": "high",
+        "recall": 0.7353,
+        "anomalies": 170
+      }
+    }
+  },
+  "model_selection": {
+    "split": "validation",
+    "metric": "f1",
+    "rule": "highest validation F1; a model named in PS9 (isolation_forest, kmeans) within 0.02 of the best is preferred",
+    "threshold_percentile": 99.0,
+    "normal_orders": 2000,
+    "anomalous_orders": 100,
+    "candidates": {
+      "isolation_forest": {
+        "f1": 0.4,
+        "precision": 0.6,
+        "recall": 0.3,
+        "false_alarm_rate": 0.01,
+        "params": {
+          "n_estimators": 200
+        }
+      },
+      "kmeans": {
+        "f1": 0.5365853658536586,
+        "precision": 0.6875,
+        "recall": 0.44,
+        "false_alarm_rate": 0.01,
+        "params": {
+          "n_clusters": 5
+        }
+      },
+      "local_outlier_factor": {
+        "f1": 0.38926174496644295,
+        "precision": 0.5918367346938775,
+        "recall": 0.29,
+        "false_alarm_rate": 0.01,
+        "params": {
+          "n_neighbors": 20
+        }
+      }
+    },
+    "chosen": "kmeans"
+  },
+  "headline": {
+    "metric": "f1",
+    "model": "hybrid",
+    "hybrid": 0.47,
+    "always_normal": 0.0,
+    "range_rule": 0.3353
+  },
+  "test": {
+    "models": [
+      {
+        "model": "always_normal",
+        "f1": 0.0,
+        "precision": 0.0,
+        "recall": 0.0,
+        "false_alarms": 0,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.0,
+        "anomalies_caught": 0,
+        "anomalous_orders": 250,
+        "roc_auc": null,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 0,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 0,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 0,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 0,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 0,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "range_rule",
+        "f1": 0.3353,
+        "precision": 0.6333,
+        "recall": 0.228,
+        "false_alarms": 33,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.0066,
+        "anomalies_caught": 57,
+        "anomalous_orders": 250,
+        "roc_auc": null,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 19,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 10,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 1,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 13,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 14,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "markov_chain",
+        "f1": 0.3529,
+        "precision": 0.5888,
+        "recall": 0.252,
+        "false_alarms": 44,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.0088,
+        "anomalies_caught": 63,
+        "anomalous_orders": 250,
+        "roc_auc": 0.7319,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 32,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 31,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 0,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 0,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 0,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "timing_isolation_forest",
+        "f1": 0.2714,
+        "precision": 0.5169,
+        "recall": 0.184,
+        "false_alarms": 43,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.0086,
+        "anomalies_caught": 46,
+        "anomalous_orders": 250,
+        "roc_auc": 0.9099,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 23,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 8,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 0,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 0,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 15,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "timing_kmeans",
+        "f1": 0.4663,
+        "precision": 0.6618,
+        "recall": 0.36,
+        "false_alarms": 46,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.0092,
+        "anomalies_caught": 90,
+        "anomalous_orders": 250,
+        "roc_auc": 0.9133,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 28,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 25,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 12,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 2,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 23,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "timing_local_outlier_factor",
+        "f1": 0.3381,
+        "precision": 0.596,
+        "recall": 0.236,
+        "false_alarms": 40,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.008,
+        "anomalies_caught": 59,
+        "anomalous_orders": 250,
+        "roc_auc": 0.8823,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 14,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 10,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 17,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 5,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 13,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "hybrid",
+        "f1": 0.47,
+        "precision": 0.5543,
+        "recall": 0.408,
+        "false_alarms": 82,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.0164,
+        "anomalies_caught": 102,
+        "anomalous_orders": 250,
+        "roc_auc": null,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 34,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 31,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 12,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 2,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 23,
+            "total": 50
+          }
+        }
+      },
+      {
+        "model": "random_forest",
+        "f1": 0.6463,
+        "precision": 0.7115,
+        "recall": 0.592,
+        "false_alarms": 60,
+        "normal_orders": 5000,
+        "false_alarm_rate": 0.012,
+        "anomalies_caught": 148,
+        "anomalous_orders": 250,
+        "roc_auc": 0.8731,
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "caught": 49,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "caught": 11,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "caught": 42,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "caught": 0,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "caught": 46,
+            "total": 50
+          }
+        },
+        "trained_on_types": [
+          "CARD_TESTING",
+          "FAST_FULFILMENT",
+          "HIGH_VALUE_QUICK_REFUND"
+        ],
+        "never_seen_types": [
+          "REPEATED_PAYMENT_FAILURE",
+          "STALLED_DELIVERY"
+        ]
+      }
+    ]
+  },
+  "rule_violations": {
+    "orders": 500,
+    "rejected_by_fsm": 500,
+    "by_type": {
+      "DUPLICATE_EVENT": 87,
+      "EVENT_AFTER_END": 75,
+      "MISSING_PAYMENT": 82,
+      "SKIPPED_STEP": 83,
+      "UNKNOWN_EVENT": 77,
+      "WRONG_ORDER": 96
+    },
+    "by_fsm_error": {
+      "INVALID_TRANSITION": 348,
+      "TERMINAL_STATE_VIOLATION": 75,
+      "UNKNOWN_EVENT": 77
+    },
+    "note": "Rejected by definition: this checks the generated violations, it is not a detection rate."
+  }
+}

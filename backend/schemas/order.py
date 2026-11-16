@@ -1,56 +1,54 @@
-"""Pydantic v2 schemas for order workflow trace requests.
+"""Request schemas (INPUT checkpoint at the API boundary).
 
-Validates incoming single-order and batch trace requests while preserving
-raw event representations (delimited strings or event token lists) exactly.
+The event sequence may be "A;B;C" text or a list of names and is stored exactly as
+sent. Event timestamps and the order amount are optional but must come together,
+one timestamp per event, strictly increasing. Problems raise InputError, which
+FastAPI reports as HTTP 422 with the message "[INPUT] expected ..., got ...; input=...".
 """
 
 from __future__ import annotations
 
 from typing import List, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
+
+from backend.fsm.parsing import parse_event_sequence
+from backend.pipeline.analyzer import check_timing_inputs
 
 
-class WorkflowAnalysisRequest(BaseModel):
-    """Request payload for analyzing and persisting a single workflow trace."""
-
+class _TraceFields(BaseModel):
     model_config = ConfigDict(strict=True)
 
-    order_id: Optional[StrictStr] = Field(
-        default=None,
-        max_length=64,
-        description="Optional unique order identifier (max 64 characters)",
-    )
+    order_id: Optional[StrictStr] = Field(default=None, max_length=64, description="Optional order identifier")
     event_sequence: Union[StrictStr, List[StrictStr]] = Field(
-        ...,
-        description="Verbatim workflow trace as semicolon-delimited string or list of event tokens",
-    )
+        ..., description="Events as 'A;B;C' text or a list of event names")
+    event_timestamps: Optional[List[StrictStr]] = Field(
+        default=None, description="Optional ISO-8601 timestamps with timezone, one per event, strictly increasing "
+                                  "(e.g. '2026-05-24T05:30:31Z'). Turns on the timing/amount check.")
+    order_amount: Optional[float] = Field(default=None, gt=0, description="Order value; sent together with event_timestamps")
+
+    @field_validator("event_sequence")
+    @classmethod
+    def validate_event_sequence(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
+        parse_event_sequence(v)
+        return v
+
+    @model_validator(mode="after")
+    def validate_timing_inputs(self) -> "_TraceFields":
+        check_timing_inputs(parse_event_sequence(self.event_sequence), self.event_timestamps, self.order_amount)
+        return self
 
 
-class TraceItemRequest(BaseModel):
-    """Single workflow trace item within a batch request."""
+class WorkflowAnalysisRequest(_TraceFields):
+    """One order to analyze and store."""
 
-    model_config = ConfigDict(strict=True)
 
-    order_id: Optional[StrictStr] = Field(
-        default=None,
-        max_length=64,
-        description="Optional unique order identifier (max 64 characters)",
-    )
-    event_sequence: Union[StrictStr, List[StrictStr]] = Field(
-        ...,
-        description="Verbatim workflow trace as semicolon-delimited string or list of event tokens",
-    )
+class TraceItemRequest(_TraceFields):
+    """One order inside a batch."""
 
 
 class BatchAnalysisRequest(BaseModel):
-    """Request payload for analyzing a batch of workflow traces."""
-
     model_config = ConfigDict(strict=True)
 
     traces: List[Union[TraceItemRequest, StrictStr, List[StrictStr]]] = Field(
-        ...,
-        min_length=1,
-        max_length=500,
-        description="Batch collection of order trace items (1 to 500 items)",
-    )
+        ..., min_length=1, max_length=500, description="1 to 500 orders: objects, 'A;B;C' text, or lists of names")

@@ -1,0 +1,615 @@
+{
+  "rule_violation": {
+    "order_id": "ORD-RV",
+    "verdict": "RULE_VIOLATION",
+    "is_anomaly": true,
+    "anomaly_type": "RULE_VIOLATION",
+    "summary": "Rule violation at step 2: 'SHIP_ITEMS' is not allowed in state 'PAID'. Allowed: PACK_ITEMS, REFUND_ORDER.",
+    "fsm_evaluation": {
+      "is_rule_valid": false,
+      "is_complete": false,
+      "final_state": "PAID",
+      "total_steps": 2,
+      "successful_transitions": 1,
+      "error": {
+        "error_type": "INVALID_TRANSITION",
+        "failed_step": 2,
+        "failed_event": "SHIP_ITEMS",
+        "state_at_failure": "PAID",
+        "allowed_events": [
+          "PACK_ITEMS",
+          "REFUND_ORDER"
+        ],
+        "message": "Illegal transition: Event 'SHIP_ITEMS' is not permitted in state 'PAID'. Permitted events are: PACK_ITEMS, REFUND_ORDER."
+      }
+    },
+    "event_timestamps": null,
+    "order_amount": null,
+    "ml_evaluation": null,
+    "ml_skip_reason": "Path check skipped: the order breaks a workflow rule (RULE_VIOLATION).",
+    "timing_evaluation": null,
+    "timing_skip_reason": "Timing check skipped: the order breaks a workflow rule (RULE_VIOLATION).",
+    "diagnostics": {
+      "severity": "CRITICAL",
+      "root_cause": "Rule violation at step 2: 'SHIP_ITEMS' is not allowed in state 'PAID'. Allowed: PACK_ITEMS, REFUND_ORDER.",
+      "key_factors": [
+        "Error type: INVALID_TRANSITION",
+        "Failed step: 2",
+        "Offending event: SHIP_ITEMS",
+        "State at failure: PAID",
+        "Allowed events there: PACK_ITEMS, REFUND_ORDER"
+      ],
+      "recommended_action": "Check why 'SHIP_ITEMS' was recorded at step 2; the workflow does not allow it there."
+    },
+    "id": 1,
+    "input_format": "DELIMITED_STRING",
+    "raw_input_payload": "CONFIRM_PAYMENT;SHIP_ITEMS",
+    "created_at": "2026-11-13T12:01:00Z"
+  },
+  "after_end": {
+    "order_id": null,
+    "verdict": "RULE_VIOLATION",
+    "is_anomaly": true,
+    "anomaly_type": "RULE_VIOLATION",
+    "summary": "Rule violation at step 5: 'REFUND_ORDER' happened after the order had ended in 'DELIVERED'.",
+    "fsm_evaluation": {
+      "is_rule_valid": false,
+      "is_complete": false,
+      "final_state": "DELIVERED",
+      "total_steps": 5,
+      "successful_transitions": 4,
+      "error": {
+        "error_type": "TERMINAL_STATE_VIOLATION",
+        "failed_step": 5,
+        "failed_event": "REFUND_ORDER",
+        "state_at_failure": "DELIVERED",
+        "allowed_events": [],
+        "message": "Cannot execute event 'REFUND_ORDER' after reaching terminal state 'DELIVERED'."
+      }
+    },
+    "event_timestamps": null,
+    "order_amount": null,
+    "ml_evaluation": null,
+    "ml_skip_reason": "Path check skipped: the order breaks a workflow rule (RULE_VIOLATION).",
+    "timing_evaluation": null,
+    "timing_skip_reason": "Timing check skipped: the order breaks a workflow rule (RULE_VIOLATION).",
+    "diagnostics": {
+      "severity": "CRITICAL",
+      "root_cause": "Rule violation at step 5: 'REFUND_ORDER' happened after the order had ended in 'DELIVERED'.",
+      "key_factors": [
+        "Error type: TERMINAL_STATE_VIOLATION",
+        "Failed step: 5",
+        "Offending event: REFUND_ORDER",
+        "State at failure: DELIVERED",
+        "Allowed events there: none: the order had already ended"
+      ],
+      "recommended_action": "Check why 'REFUND_ORDER' was recorded at step 5; the workflow does not allow it there."
+    },
+    "id": 2,
+    "input_format": "EVENT_LIST",
+    "raw_input_payload": [
+      "CONFIRM_PAYMENT",
+      "PACK_ITEMS",
+      "SHIP_ITEMS",
+      "DELIVER_ITEMS",
+      "REFUND_ORDER"
+    ],
+    "created_at": "2026-11-13T12:02:00Z"
+  },
+  "incomplete": {
+    "order_id": "ORD-IP",
+    "verdict": "VALID_INCOMPLETE",
+    "is_anomaly": false,
+    "anomaly_type": null,
+    "summary": "In progress: legal so far, currently in state 'PACKED'.",
+    "fsm_evaluation": {
+      "is_rule_valid": true,
+      "is_complete": false,
+      "final_state": "PACKED",
+      "total_steps": 2,
+      "successful_transitions": 2,
+      "error": null
+    },
+    "event_timestamps": null,
+    "order_amount": null,
+    "ml_evaluation": null,
+    "ml_skip_reason": "Path check skipped: the order has not finished yet (VALID_INCOMPLETE).",
+    "timing_evaluation": null,
+    "timing_skip_reason": "Timing check skipped: the order has not finished yet (VALID_INCOMPLETE).",
+    "diagnostics": {
+      "severity": "INFO",
+      "root_cause": "The order is legal so far and is still in progress in state 'PACKED'.",
+      "key_factors": [
+        "Current state: PACKED",
+        "Steps so far: 2",
+        "Possible outcome DELIVERED: next SHIP_ITEMS -> DELIVER_ITEMS",
+        "Possible outcome REFUNDED: next REFUND_ORDER"
+      ],
+      "recommended_action": "No action: wait for the next event from state 'PACKED'."
+    },
+    "id": 3,
+    "input_format": "EVENT_LIST",
+    "raw_input_payload": [
+      "CONFIRM_PAYMENT",
+      "PACK_ITEMS"
+    ],
+    "created_at": "2026-11-13T12:03:00Z"
+  },
+  "normal_timed": {
+    "order_id": "ORD_06601",
+    "verdict": "NORMAL",
+    "is_anomaly": false,
+    "anomaly_type": null,
+    "summary": "Normal: the order finished in 'DELIVERED'; this event order occurs in 75.8% of orders of normal behaviour and its timing and amount are within normal behaviour.",
+    "fsm_evaluation": {
+      "is_rule_valid": true,
+      "is_complete": true,
+      "final_state": "DELIVERED",
+      "total_steps": 4,
+      "successful_transitions": 4,
+      "error": null
+    },
+    "event_timestamps": [
+      "2026-06-06T12:07:51Z",
+      "2026-06-06T17:21:27Z",
+      "2026-06-07T03:02:01Z",
+      "2026-06-13T12:47:21Z"
+    ],
+    "order_amount": 260.49,
+    "ml_evaluation": {
+      "prediction": "NORMAL",
+      "is_ml_anomaly": false,
+      "anomaly_score": -3.178271956817727,
+      "path_log10_probability": -0.12048747790708267,
+      "transitions": [
+        {
+          "step": 1,
+          "from_state": "ORDER_CREATED",
+          "event": "CONFIRM_PAYMENT",
+          "to_state": "PAID",
+          "probability": 0.8255813953488372,
+          "is_unusual": false
+        },
+        {
+          "step": 2,
+          "from_state": "PAID",
+          "event": "PACK_ITEMS",
+          "to_state": "PACKED",
+          "probability": 0.9488296135002722,
+          "is_unusual": false
+        },
+        {
+          "step": 3,
+          "from_state": "PACKED",
+          "event": "SHIP_ITEMS",
+          "to_state": "SHIPPED",
+          "probability": 0.967307140808718,
+          "is_unusual": false
+        },
+        {
+          "step": 4,
+          "from_state": "SHIPPED",
+          "event": "DELIVER_ITEMS",
+          "to_state": "DELIVERED",
+          "probability": 1.0,
+          "is_unusual": false
+        }
+      ]
+    },
+    "ml_skip_reason": null,
+    "timing_evaluation": {
+      "prediction": "NORMAL",
+      "is_timing_anomaly": false,
+      "anomaly_score": -2.1566758176153153,
+      "model_name": "kmeans",
+      "inputs": {
+        "amount_z": -1.9090817273047112,
+        "slowest_step_z": 1.8879389191269256,
+        "fastest_step_z": -0.6085356922562114,
+        "mean_step_z": 0.7371485210459306,
+        "payment_failures": 0.0,
+        "refunded": 0.0,
+        "cancelled": 0.0
+      },
+      "measurements": [
+        {
+          "name": "order_amount",
+          "step": null,
+          "unit": "currency",
+          "value": 260.49,
+          "normal_low": 250.11866340307697,
+          "normal_high": 5721.360166594553,
+          "percentile": 2.812577477513778,
+          "is_unusual": false
+        },
+        {
+          "name": "payment_failures",
+          "step": null,
+          "unit": "count",
+          "value": 0.0,
+          "normal_low": 0.0,
+          "normal_high": 1.0,
+          "percentile": 45.3125,
+          "is_unusual": false
+        },
+        {
+          "name": "CONFIRM_PAYMENT -> PACK_ITEMS",
+          "step": 2,
+          "unit": "seconds",
+          "value": 18816.0,
+          "normal_low": 7152.377164855681,
+          "normal_high": 118281.73950578316,
+          "percentile": 27.141612050295677,
+          "is_unusual": false
+        },
+        {
+          "name": "PACK_ITEMS -> SHIP_ITEMS",
+          "step": 3,
+          "unit": "seconds",
+          "value": 34834.0,
+          "normal_low": 4618.433098793677,
+          "normal_high": 71433.3583071413,
+          "percentile": 82.43426767156399,
+          "is_unusual": false
+        },
+        {
+          "name": "SHIP_ITEMS -> DELIVER_ITEMS",
+          "step": 4,
+          "unit": "seconds",
+          "value": 553520.0,
+          "normal_low": 120176.96281690197,
+          "normal_high": 569572.7413257983,
+          "percentile": 97.0482924534599,
+          "is_unusual": false
+        }
+      ]
+    },
+    "timing_skip_reason": null,
+    "diagnostics": {
+      "severity": "INFO",
+      "root_cause": "Legal, complete order ending in 'DELIVERED', not flagged by either model.",
+      "key_factors": [
+        "Final state: DELIVERED",
+        "Event order frequency under normal behaviour: 75.8% of orders",
+        "Path check flags orders rarer than about 1 in 1,990 orders (the rarest 1% of normal paths)",
+        "Path anomaly score: -3.18 (above 0 means flagged; +1 = 10x rarer)",
+        "Timing/amount model (kmeans) score: -2.16 (above 0 means flagged)"
+      ],
+      "recommended_action": "No action needed."
+    },
+    "id": 4,
+    "input_format": "EVENT_LIST",
+    "raw_input_payload": [
+      "CONFIRM_PAYMENT",
+      "PACK_ITEMS",
+      "SHIP_ITEMS",
+      "DELIVER_ITEMS"
+    ],
+    "created_at": "2026-11-13T12:04:00Z"
+  },
+  "path_anomaly": {
+    "order_id": null,
+    "verdict": "STATISTICAL_ANOMALY",
+    "is_anomaly": true,
+    "anomaly_type": "STATISTICAL_ANOMALY",
+    "summary": "Statistical anomaly: the order is legal and complete, but its event order occurs in only about 1 in 261,582 orders under normal behaviour (flagged below about 1 in 1,990 orders).",
+    "fsm_evaluation": {
+      "is_rule_valid": true,
+      "is_complete": true,
+      "final_state": "DELIVERED",
+      "total_steps": 14,
+      "successful_transitions": 14,
+      "error": null
+    },
+    "event_timestamps": null,
+    "order_amount": null,
+    "ml_evaluation": {
+      "prediction": "ANOMALY",
+      "is_ml_anomaly": true,
+      "anomaly_score": 2.1188479712118182,
+      "path_log10_probability": -5.417607405936628,
+      "transitions": [
+        {
+          "step": 1,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 2,
+          "from_state": "PAYMENT_FAILED",
+          "event": "RETRY_PAYMENT",
+          "to_state": "ORDER_CREATED",
+          "probability": 0.7441860465116279,
+          "is_unusual": false
+        },
+        {
+          "step": 3,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 4,
+          "from_state": "PAYMENT_FAILED",
+          "event": "RETRY_PAYMENT",
+          "to_state": "ORDER_CREATED",
+          "probability": 0.7441860465116279,
+          "is_unusual": false
+        },
+        {
+          "step": 5,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 6,
+          "from_state": "PAYMENT_FAILED",
+          "event": "RETRY_PAYMENT",
+          "to_state": "ORDER_CREATED",
+          "probability": 0.7441860465116279,
+          "is_unusual": false
+        },
+        {
+          "step": 7,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 8,
+          "from_state": "PAYMENT_FAILED",
+          "event": "RETRY_PAYMENT",
+          "to_state": "ORDER_CREATED",
+          "probability": 0.7441860465116279,
+          "is_unusual": false
+        },
+        {
+          "step": 9,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 10,
+          "from_state": "PAYMENT_FAILED",
+          "event": "RETRY_PAYMENT",
+          "to_state": "ORDER_CREATED",
+          "probability": 0.7441860465116279,
+          "is_unusual": false
+        },
+        {
+          "step": 11,
+          "from_state": "ORDER_CREATED",
+          "event": "CONFIRM_PAYMENT",
+          "to_state": "PAID",
+          "probability": 0.8255813953488372,
+          "is_unusual": false
+        },
+        {
+          "step": 12,
+          "from_state": "PAID",
+          "event": "PACK_ITEMS",
+          "to_state": "PACKED",
+          "probability": 0.9488296135002722,
+          "is_unusual": false
+        },
+        {
+          "step": 13,
+          "from_state": "PACKED",
+          "event": "SHIP_ITEMS",
+          "to_state": "SHIPPED",
+          "probability": 0.967307140808718,
+          "is_unusual": false
+        },
+        {
+          "step": 14,
+          "from_state": "SHIPPED",
+          "event": "DELIVER_ITEMS",
+          "to_state": "DELIVERED",
+          "probability": 1.0,
+          "is_unusual": false
+        }
+      ]
+    },
+    "ml_skip_reason": null,
+    "timing_evaluation": null,
+    "timing_skip_reason": "Timing check skipped: event timestamps and order amount were not provided.",
+    "diagnostics": {
+      "severity": "WARNING",
+      "root_cause": "The order follows every rule, but its event order occurs in only about 1 in 261,582 orders under normal behaviour (flagged below about 1 in 1,990 orders).",
+      "key_factors": [
+        "Event order frequency under normal behaviour: about 1 in 261,582 orders",
+        "Path check flags orders rarer than about 1 in 1,990 orders (the rarest 1% of normal paths)",
+        "Path anomaly score: 2.12 (above 0 means flagged; +1 = 10x rarer)",
+        "Unusual step FAIL_PAYMENT from ORDER_CREATED: 5 time(s) at step(s) 1, 3, 5, 7, 9; probability 0.117 each, 2.2e-05 together",
+        "Timing/amount check: not run (no event timestamps and order amount provided)"
+      ],
+      "recommended_action": "Review why the unusual steps happened. Repeated payment failures can mean card testing (someone trying stolen card numbers) or a payment gateway problem."
+    },
+    "id": 5,
+    "input_format": "EVENT_LIST",
+    "raw_input_payload": [
+      "FAIL_PAYMENT",
+      "RETRY_PAYMENT",
+      "FAIL_PAYMENT",
+      "RETRY_PAYMENT",
+      "FAIL_PAYMENT",
+      "RETRY_PAYMENT",
+      "FAIL_PAYMENT",
+      "RETRY_PAYMENT",
+      "FAIL_PAYMENT",
+      "RETRY_PAYMENT",
+      "CONFIRM_PAYMENT",
+      "PACK_ITEMS",
+      "SHIP_ITEMS",
+      "DELIVER_ITEMS"
+    ],
+    "created_at": "2026-11-13T12:05:00Z"
+  },
+  "timing_anomaly": {
+    "order_id": "ORD_11621",
+    "verdict": "STATISTICAL_ANOMALY",
+    "is_anomaly": true,
+    "anomaly_type": "STATISTICAL_ANOMALY",
+    "summary": "Statistical anomaly: the order is legal and complete, but its timing, amount and outcome are unusual together.",
+    "fsm_evaluation": {
+      "is_rule_valid": true,
+      "is_complete": true,
+      "final_state": "CANCELLED",
+      "total_steps": 4,
+      "successful_transitions": 4,
+      "error": null
+    },
+    "event_timestamps": [
+      "2026-03-25T17:56:21Z",
+      "2026-03-25T17:56:52Z",
+      "2026-03-25T17:57:17Z",
+      "2026-03-25T17:58:32Z"
+    ],
+    "order_amount": 239.76,
+    "ml_evaluation": {
+      "prediction": "NORMAL",
+      "is_ml_anomaly": false,
+      "anomaly_score": -0.49320733043590215,
+      "path_log10_probability": -2.8055521042889073,
+      "transitions": [
+        {
+          "step": 1,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 2,
+          "from_state": "PAYMENT_FAILED",
+          "event": "RETRY_PAYMENT",
+          "to_state": "ORDER_CREATED",
+          "probability": 0.7441860465116279,
+          "is_unusual": false
+        },
+        {
+          "step": 3,
+          "from_state": "ORDER_CREATED",
+          "event": "FAIL_PAYMENT",
+          "to_state": "PAYMENT_FAILED",
+          "probability": 0.11719106247150023,
+          "is_unusual": true
+        },
+        {
+          "step": 4,
+          "from_state": "PAYMENT_FAILED",
+          "event": "CANCEL_ORDER",
+          "to_state": "CANCELLED",
+          "probability": 0.15310077519379844,
+          "is_unusual": false
+        }
+      ]
+    },
+    "ml_skip_reason": null,
+    "timing_evaluation": {
+      "prediction": "ANOMALY",
+      "is_timing_anomaly": true,
+      "anomaly_score": 0.5150986703289036,
+      "model_name": "kmeans",
+      "inputs": {
+        "amount_z": -2.012935210104107,
+        "slowest_step_z": -0.6616479592171106,
+        "fastest_step_z": -2.2856204556596853,
+        "mean_step_z": -1.3522526488430697,
+        "payment_failures": 2.0,
+        "refunded": 0.0,
+        "cancelled": 1.0
+      },
+      "measurements": [
+        {
+          "name": "order_amount",
+          "step": null,
+          "unit": "currency",
+          "value": 239.76,
+          "normal_low": 250.11866340307697,
+          "normal_high": 5721.360166594553,
+          "percentile": 2.2060722902831396,
+          "is_unusual": true
+        },
+        {
+          "name": "payment_failures",
+          "step": null,
+          "unit": "count",
+          "value": 2.0,
+          "normal_low": 0.0,
+          "normal_high": 1.0,
+          "percentile": 98.375,
+          "is_unusual": true
+        },
+        {
+          "name": "FAIL_PAYMENT -> RETRY_PAYMENT",
+          "step": 2,
+          "unit": "seconds",
+          "value": 31.0,
+          "normal_low": 16.414093661728813,
+          "normal_high": 307.60815572256473,
+          "percentile": 13.360952897538924,
+          "is_unusual": false
+        },
+        {
+          "name": "RETRY_PAYMENT -> FAIL_PAYMENT",
+          "step": 3,
+          "unit": "seconds",
+          "value": 25.0,
+          "normal_low": 9.266153131710169,
+          "normal_high": 185.48739288427228,
+          "percentile": 25.4098431902801,
+          "is_unusual": false
+        },
+        {
+          "name": "FAIL_PAYMENT -> CANCEL_ORDER",
+          "step": 4,
+          "unit": "seconds",
+          "value": 75.0,
+          "normal_low": 102.19493494019186,
+          "normal_high": 4234.661616045588,
+          "percentile": 1.1138236203866392,
+          "is_unusual": true
+        }
+      ]
+    },
+    "timing_skip_reason": null,
+    "diagnostics": {
+      "severity": "WARNING",
+      "root_cause": "The order follows every rule, but its timing, amount and outcome are unusual together.",
+      "key_factors": [
+        "Event order frequency under normal behaviour: about 1 in 639 orders",
+        "Path check flags orders rarer than about 1 in 1,990 orders (the rarest 1% of normal paths)",
+        "Path anomaly score: -0.49 (above 0 means flagged; +1 = 10x rarer)",
+        "Timing/amount model (kmeans) score: 0.52 (above 0 means flagged)",
+        "Order amount: 239.76, lower than 97.8% of normal orders (normal 250.12 to 5,721.36)",
+        "Failed payments: 2, more than 98.4% of normal orders (normal 0 to 1)",
+        "FAIL_PAYMENT -> CANCEL_ORDER at step 4: 1.2 min, faster than 98.9% of normal orders (normal 1.7 min to 1.2 h)"
+      ],
+      "recommended_action": "Check the values listed as unusual against the order's records."
+    },
+    "id": 6,
+    "input_format": "EVENT_LIST",
+    "raw_input_payload": [
+      "FAIL_PAYMENT",
+      "RETRY_PAYMENT",
+      "FAIL_PAYMENT",
+      "CANCEL_ORDER"
+    ],
+    "created_at": "2026-11-13T12:06:00Z"
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "states": [
+    "CANCELLED",
+    "DELIVERED",
+    "ORDER_CREATED",
+    "PACKED",
+    "PAID",
+    "PAYMENT_FAILED",
+    "REFUNDED",
+    "SHIPPED"
+  ],
+  "events": [
+    "CANCEL_ORDER",
+    "CONFIRM_PAYMENT",
+    "DELIVER_ITEMS",
+    "FAIL_PAYMENT",
+    "PACK_ITEMS",
+    "REFUND_ORDER",
+    "RETRY_PAYMENT",
+    "SHIP_ITEMS"
+  ],
+  "initial_state": "ORDER_CREATED",
+  "terminal_states": [
+    "CANCELLED",
+    "DELIVERED",
+    "REFUNDED"
+  ],
+  "transitions": [
+    {
+      "from_state": "ORDER_CREATED",
+      "event": "CANCEL_ORDER",
+      "to_state": "CANCELLED"
+    },
+    {
+      "from_state": "ORDER_CREATED",
+      "event": "CONFIRM_PAYMENT",
+      "to_state": "PAID"
+    },
+    {
+      "from_state": "ORDER_CREATED",
+      "event": "FAIL_PAYMENT",
+      "to_state": "PAYMENT_FAILED"
+    },
+    {
+      "from_state": "PACKED",
+      "event": "REFUND_ORDER",
+      "to_state": "REFUNDED"
+    },
+    {
+      "from_state": "PACKED",
+      "event": "SHIP_ITEMS",
+      "to_state": "SHIPPED"
+    },
+    {
+      "from_state": "PAID",
+      "event": "PACK_ITEMS",
+      "to_state": "PACKED"
+    },
+    {
+      "from_state": "PAID",
+      "event": "REFUND_ORDER",
+      "to_state": "REFUNDED"
+    },
+    {
+      "from_state": "PAYMENT_FAILED",
+      "event": "CANCEL_ORDER",
+      "to_state": "CANCELLED"
+    },
+    {
+      "from_state": "PAYMENT_FAILED",
+      "event": "CONFIRM_PAYMENT",
+      "to_state": "PAID"
+    },
+    {
+      "from_state": "PAYMENT_FAILED",
+      "event": "RETRY_PAYMENT",
+      "to_state": "ORDER_CREATED"
+    },
+    {
+      "from_state": "SHIPPED",
+      "event": "DELIVER_ITEMS",
+      "to_state": "DELIVERED"
+    }
+  ],
+  "reachability": {
+    "initial_state": "ORDER_CREATED",
+    "reachable_states": [
+      "CANCELLED",
+      "DELIVERED",
+      "ORDER_CREATED",
+      "PACKED",
+      "PAID",
+      "PAYMENT_FAILED",
+      "REFUNDED",
+      "SHIPPED"
+    ],
+    "unreachable_states": [],
+    "states_that_can_finish": [
+      "CANCELLED",
+      "DELIVERED",
+      "ORDER_CREATED",
+      "PACKED",
+      "PAID",
+      "PAYMENT_FAILED",
+      "REFUNDED",
+      "SHIPPED"
+    ],
+    "deadlock_states": [],
+    "is_deadlock_free": true,
+    "shortest_paths": {
+      "CANCELLED": [
+        "CANCEL_ORDER"
+      ],
+      "DELIVERED": [
+        "CONFIRM_PAYMENT",
+        "PACK_ITEMS",
+        "SHIP_ITEMS",
+        "DELIVER_ITEMS"
+      ],
+      "ORDER_CREATED": [],
+      "PACKED": [
+        "CONFIRM_PAYMENT",
+        "PACK_ITEMS"
+      ],
+      "PAID": [
+        "CONFIRM_PAYMENT"
+      ],
+      "PAYMENT_FAILED": [
+        "FAIL_PAYMENT"
+      ],
+      "REFUNDED": [
+        "CONFIRM_PAYMENT",
+        "REFUND_ORDER"
+      ],
+      "SHIPPED": [
+        "CONFIRM_PAYMENT",
+        "PACK_ITEMS",
+        "SHIP_ITEMS"
+      ]
+    },
+    "cycles": [
+      [
+        "ORDER_CREATED",
+        "PAYMENT_FAILED"
+      ]
+    ],
+    "accepted_sequences_by_length": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4,
+      4
+    ],
+    "language_is_infinite": true
+  }
+}

@@ -107,7 +107,7 @@ def validate_trace(
                     "allowed_events": allowed,
                     "message": (
                         f"Illegal transition: Event '{event_str}' is not permitted "
-                        f"in state '{current_state}'. Permitted events are: {allowed}."
+                        f"in state '{current_state}'. Permitted events are: {', '.join(allowed)}."
                     ),
                 },
             }
@@ -136,6 +136,3 @@ def validate_trace(
     }
 
 
-# Convenient aliases
-validate_workflow = validate_trace
-validate_event_sequence = validate_trace

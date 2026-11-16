@@ -36,6 +36,8 @@ class WorkflowAnalysis(Base):
     # 2. Raw Input Sequence Preservation
     input_format: Mapped[str] = mapped_column(String(32), nullable=False)
     raw_input_payload: Mapped[Any] = mapped_column(JSON, nullable=False)
+    event_timestamps: Mapped[Optional[List[str]]] = mapped_column(JSON(none_as_null=True), nullable=True)
+    order_amount: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # 3. High-Level Outcome & Decision Verdict
     verdict: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
@@ -51,14 +53,18 @@ class WorkflowAnalysis(Base):
     successful_transitions: Mapped[int] = mapped_column(Integer, nullable=False)
     fsm_error: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON(none_as_null=True), nullable=True)
 
-    # 5. Statistical ML Evaluation (Strictly conditional)
+    # 5. Markov Chain Path Evaluation (Strictly conditional)
     ml_evaluated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     ml_prediction: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     is_ml_anomaly: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     anomaly_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    raw_decision_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    ml_features: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON(none_as_null=True), nullable=True)
+    path_log10_probability: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ml_transitions: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON(none_as_null=True), nullable=True)
     ml_skip_reason: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+
+    # 5b. Timing/Amount Evaluation (validated against TimingEvaluationSchema before storing)
+    timing_evaluation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON(none_as_null=True), nullable=True)
+    timing_skip_reason: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
 
     # 6. Operational Diagnostics
     diagnostic_severity: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -101,9 +107,9 @@ class WorkflowAnalysis(Base):
                 ml_prediction IS NOT NULL AND
                 is_ml_anomaly IS NOT NULL AND
                 anomaly_score IS NOT NULL AND
-                raw_decision_score IS NOT NULL AND
-                ml_features IS NOT NULL AND
-                ml_features != 'null' AND
+                path_log10_probability IS NOT NULL AND
+                ml_transitions IS NOT NULL AND
+                ml_transitions != 'null' AND
                 ml_skip_reason IS NULL AND
                 (
                     (ml_prediction = 'NORMAL' AND is_ml_anomaly = 0) OR
@@ -116,12 +122,24 @@ class WorkflowAnalysis(Base):
                 ml_prediction IS NULL AND
                 is_ml_anomaly IS NULL AND
                 anomaly_score IS NULL AND
-                raw_decision_score IS NULL AND
-                (ml_features IS NULL OR ml_features = 'null') AND
+                path_log10_probability IS NULL AND
+                (ml_transitions IS NULL OR ml_transitions = 'null') AND
                 ml_skip_reason IS NOT NULL
             )
             """,
             name="ck_ml_evaluation_consistency",
+        ),
+        CheckConstraint(
+            """
+            ((timing_evaluation IS NULL OR timing_evaluation = 'null') AND timing_skip_reason IS NOT NULL)
+            OR
+            (timing_evaluation IS NOT NULL AND timing_evaluation != 'null' AND timing_skip_reason IS NULL)
+            """,
+            name="ck_timing_evaluation_consistency",
+        ),
+        CheckConstraint(
+            "(event_timestamps IS NULL OR event_timestamps = 'null') = (order_amount IS NULL)",
+            name="ck_timing_inputs_together",
         ),
         Index("ix_analyses_order_created_id", "order_id", "created_at", "id"),
     )

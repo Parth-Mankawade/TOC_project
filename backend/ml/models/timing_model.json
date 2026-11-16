@@ -1,0 +1,139 @@
+{
+  "model_name": "kmeans",
+  "detector_params": {
+    "n_clusters": 5,
+    "silhouette_by_k": {
+      "2": 0.20841429101552592,
+      "3": 0.2587743406765246,
+      "4": 0.2850551323007041,
+      "5": 0.3062709827305192,
+      "6": 0.25706238638984097,
+      "7": 0.2564444080711441,
+      "8": 0.25887787720966193
+    }
+  },
+  "model_inputs": [
+    "amount_z",
+    "slowest_step_z",
+    "fastest_step_z",
+    "mean_step_z",
+    "payment_failures",
+    "refunded",
+    "cancelled"
+  ],
+  "threshold": 4.340968579459933,
+  "threshold_percentile": 99.0,
+  "normal_band_percentiles": [
+    2.5,
+    97.5
+  ],
+  "training_sample_count": 4000,
+  "validation_sample_count": 2000,
+  "sklearn_version": "1.9.1",
+  "amount": {
+    "mean_ln": 7.086948653165402,
+    "std_ln": 0.7984907919981519,
+    "count": 4000,
+    "median": 1196.2520460656422,
+    "normal_low": 250.11866340307697,
+    "normal_high": 5721.360166594553
+  },
+  "steps": {
+    "CONFIRM_PAYMENT -> PACK_ITEMS": {
+      "mean_ln": 10.27801236578832,
+      "std_ln": 0.7157337205236373,
+      "count": 3485,
+      "median": 29086.00372448184,
+      "normal_low": 7152.377164855681,
+      "normal_high": 118281.73950578316
+    },
+    "CONFIRM_PAYMENT -> REFUND_ORDER": {
+      "mean_ln": 9.274796142011347,
+      "std_ln": 1.1933414965093172,
+      "count": 187,
+      "median": 10665.784024761291,
+      "normal_low": 1028.5340218029683,
+      "normal_high": 110603.0004369126
+    },
+    "FAIL_PAYMENT -> CANCEL_ORDER": {
+      "mean_ln": 6.488970409201503,
+      "std_ln": 0.9500625050358376,
+      "count": 78,
+      "median": 657.8457025363219,
+      "normal_low": 102.19493494019186,
+      "normal_high": 4234.661616045588
+    },
+    "FAIL_PAYMENT -> CONFIRM_PAYMENT": {
+      "mean_ln": 5.061467432862357,
+      "std_ln": 0.6567911544237138,
+      "count": 52,
+      "median": 157.82193958333593,
+      "normal_low": 43.56179151861974,
+      "normal_high": 571.7800794120174
+    },
+    "FAIL_PAYMENT -> RETRY_PAYMENT": {
+      "mean_ln": 4.26348354336683,
+      "std_ln": 0.747637823717252,
+      "count": 383,
+      "median": 71.05708324397958,
+      "normal_low": 16.414093661728813,
+      "normal_high": 307.60815572256473
+    },
+    "PACK_ITEMS -> REFUND_ORDER": {
+      "mean_ln": 10.558023964483029,
+      "std_ln": 1.029604136370987,
+      "count": 113,
+      "median": 38485.00502285514,
+      "normal_low": 5115.533320139952,
+      "normal_high": 289529.0713439562
+    },
+    "PACK_ITEMS -> SHIP_ITEMS": {
+      "mean_ln": 9.807165506423791,
+      "std_ln": 0.6986632136003547,
+      "count": 3372,
+      "median": 18163.42991738316,
+      "normal_low": 4618.433098793677,
+      "normal_high": 71433.3583071413
+    },
+    "RETRY_PAYMENT -> CANCEL_ORDER": {
+      "mean_ln": 5.768860823989532,
+      "std_ln": 1.1000231158378888,
+      "count": 34,
+      "median": 320.17279165735124,
+      "normal_low": 37.07174669143787,
+      "normal_high": 2765.1952137808935
+    },
+    "RETRY_PAYMENT -> CONFIRM_PAYMENT": {
+      "mean_ln": 3.852669594780036,
+      "std_ln": 0.6543278632412203,
+      "count": 211,
+      "median": 47.118683270575325,
+      "normal_low": 13.06857572351798,
+      "normal_high": 169.8861727645971
+    },
+    "RETRY_PAYMENT -> FAIL_PAYMENT": {
+      "mean_ln": 3.7246776149507093,
+      "std_ln": 0.7644575684643453,
+      "count": 138,
+      "median": 41.45786519428316,
+      "normal_low": 9.266153131710169,
+      "normal_high": 185.48739288427228
+    },
+    "SHIP_ITEMS -> DELIVER_ITEMS": {
+      "mean_ln": 12.47468120386683,
+      "std_ln": 0.39692595597976715,
+      "count": 3372,
+      "median": 261628.59582972075,
+      "normal_low": 120176.96281690197,
+      "normal_high": 569572.7413257983
+    }
+  },
+  "failure_counts": {
+    "0": 3625,
+    "1": 276,
+    "2": 68,
+    "3": 24,
+    "4": 6,
+    "5": 1
+  }
+}

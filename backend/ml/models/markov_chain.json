@@ -1,0 +1,88 @@
+{
+  "model_name": "MarkovChain",
+  "smoothing_alpha": 1.0,
+  "training_sample_count": 4000,
+  "validation_sample_count": 2000,
+  "threshold_percentile": 1.0,
+  "threshold_rule": "percentile of log10 P(path) over normal validation orders",
+  "threshold_log10_probability": -3.2987594347248095,
+  "transitions": [
+    {
+      "from_state": "ORDER_CREATED",
+      "event": "CANCEL_ORDER",
+      "to_state": "CANCELLED",
+      "count": 250,
+      "probability": 0.05722754217966256
+    },
+    {
+      "from_state": "ORDER_CREATED",
+      "event": "CONFIRM_PAYMENT",
+      "to_state": "PAID",
+      "count": 3620,
+      "probability": 0.8255813953488372
+    },
+    {
+      "from_state": "ORDER_CREATED",
+      "event": "FAIL_PAYMENT",
+      "to_state": "PAYMENT_FAILED",
+      "count": 513,
+      "probability": 0.11719106247150023
+    },
+    {
+      "from_state": "PACKED",
+      "event": "REFUND_ORDER",
+      "to_state": "REFUNDED",
+      "count": 113,
+      "probability": 0.032692859191281905
+    },
+    {
+      "from_state": "PACKED",
+      "event": "SHIP_ITEMS",
+      "to_state": "SHIPPED",
+      "count": 3372,
+      "probability": 0.967307140808718
+    },
+    {
+      "from_state": "PAID",
+      "event": "PACK_ITEMS",
+      "to_state": "PACKED",
+      "count": 3485,
+      "probability": 0.9488296135002722
+    },
+    {
+      "from_state": "PAID",
+      "event": "REFUND_ORDER",
+      "to_state": "REFUNDED",
+      "count": 187,
+      "probability": 0.05117038649972782
+    },
+    {
+      "from_state": "PAYMENT_FAILED",
+      "event": "CANCEL_ORDER",
+      "to_state": "CANCELLED",
+      "count": 78,
+      "probability": 0.15310077519379844
+    },
+    {
+      "from_state": "PAYMENT_FAILED",
+      "event": "CONFIRM_PAYMENT",
+      "to_state": "PAID",
+      "count": 52,
+      "probability": 0.10271317829457365
+    },
+    {
+      "from_state": "PAYMENT_FAILED",
+      "event": "RETRY_PAYMENT",
+      "to_state": "ORDER_CREATED",
+      "count": 383,
+      "probability": 0.7441860465116279
+    },
+    {
+      "from_state": "SHIPPED",
+      "event": "DELIVER_ITEMS",
+      "to_state": "DELIVERED",
+      "count": 3372,
+      "probability": 1.0
+    }
+  ]
+}

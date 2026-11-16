@@ -12,7 +12,7 @@
 This document defines the formal workflow model for an online shopping order management lifecycle. The project employs a dual-engine anomaly detection architecture:
 
 1. **Finite State Machine (FSM):** Provides **deterministic** verification of process structure and transition rules. It answers: *"Does this sequence obey the formal grammar and operational logic of an order lifecycle?"*
-2. **Machine Learning (Isolation Forest):** Provides **statistical** anomaly detection on numeric sequence features. It answers: *"Is this sequence statistically rare, unusually delayed, or behaviorally abnormal, even if structurally legal?"*
+2. **Machine Learning (two models):** Provides **statistical** anomaly detection on structurally legal orders. The Markov chain path model answers *"Is this order of events rare under normal behaviour?"*; the timing-and-amount model (k-means clustering, chosen on the validation split from Isolation Forest, k-means and Local Outlier Factor) answers *"Are the times, the amount and the outcome unusual together?"* (see the root `README.md`).
 
 ```text
                ┌────────────────────────────────────────────────────────┐
@@ -21,8 +21,8 @@ This document defines the formal workflow model for an online shopping order man
                            │                                │
                            ▼                                ▼
               ┌─────────────────────────┐      ┌─────────────────────────┐
-              │  FSM Validation Engine  │      │  ML Feature Extractor   │
-              │  (Deterministic Rules)  │      │   & Isolation Forest    │
+              │  FSM Validation Engine  │      │ Markov path model +     │
+              │  (Deterministic Rules)  │      │ timing/amount model     │
               └────────────┬────────────┘      └────────────┬────────────┘
                            │                                │
                            │  Structural                    │  Statistical
@@ -37,7 +37,7 @@ This document defines the formal workflow model for an online shopping order man
 ```
 
 > [!IMPORTANT]
-> **Separation of Concerns:** The FSM must **never** perform probabilistic scoring, and ML must **never** replace strict transition enforcement. A sequence with multiple failed payment retries may be fully **valid** under FSM rules, yet flagged as an anomaly by the **Isolation Forest**.
+> **Separation of Concerns:** The FSM must **never** perform probabilistic scoring, and ML must **never** replace strict transition enforcement. A sequence with multiple failed payment retries may be fully **valid** under FSM rules, yet flagged as an anomaly by the **Markov chain path model**.
 
 ---
 
@@ -197,7 +197,7 @@ The FSM validation engine evaluates each incoming event against three prioritize
   - Immediately halt trace evaluation.
   - Return `is_valid = False` with error type `INVALID_TRANSITION`.
   - Provide `failed_step`, `failed_event`, `state_at_failure`, and the list of permitted events in that state.
-  - *ML Note:* In contrast, legitimate loops (such as `FAIL_PAYMENT` followed by `RETRY_PAYMENT`) are structurally valid. However, repeating that loop an excessive number of times (e.g., 6 retries) represents a **statistical anomaly** detected by the Isolation Forest.
+  - *ML Note:* In contrast, legitimate loops (such as `FAIL_PAYMENT` followed by `RETRY_PAYMENT`) are structurally valid. However, repeating that loop an excessive number of times (e.g., 6 retries) represents a **statistical anomaly** detected by the Markov chain path model (and, if the retries are seconds apart, by the timing model).
 
 ---
 
@@ -283,6 +283,7 @@ A sequence is **valid** if every transition obeys the transition table. It is **
 - **Result:** `is_valid = True`, `is_complete = False`
 - **Metrics:** `total_steps = 0`, `successful_transitions = 0`, `final_state = "ORDER_CREATED"`
 - **Explanation:** Represents a newly created order that has not yet received any lifecycle events. Fully valid prefix, but incomplete.
+- **API note:** the validator accepts `[]`, but the API rejects an empty `event_sequence` with HTTP 422 (`[INPUT] expected one or more non-empty event names ...`), because there is nothing to analyze.
 
 ---
 
@@ -597,11 +598,11 @@ Output: ValidationResult object
 
 To ensure the FSM design does not conflate logical validity with statistical likelihood, the following table clarifies the boundary between the two detection mechanisms:
 
-| Scenario / Pattern | FSM Verdict (`is_valid`, `is_complete`) | Isolation Forest (ML) Verdict | Explanation |
+| Scenario / Pattern | FSM Verdict (`is_valid`, `is_complete`) | ML Verdict | Explanation |
 | :--- | :--- | :--- | :--- |
 | `[CONFIRM_PAYMENT, PACK_ITEMS, SHIP_ITEMS, DELIVER_ITEMS]` | **Valid, Complete** | **Normal** | Standard, typical linear workflow trace. |
 | `[CONFIRM_PAYMENT, PACK_ITEMS]` | **Valid, Incomplete** | **Normal (In-Progress)** | Valid intermediate prefix; active order in warehouse. |
 | `[CONFIRM_PAYMENT, SHIP_ITEMS, DELIVER_ITEMS]` | **Invalid, Incomplete** | *(Bypassed / Outlier)* | FSM rejects at step 2: packing skipped. Deterministic rule failure. |
-| 5 consecutive `FAIL_PAYMENT` $\to$ `RETRY_PAYMENT` loops, then success | **Valid, Complete** | **Statistical Anomaly** | Allowed by FSM grammar, but statistically rare in customer population (outlier frequency). |
-| Order completed in 1.2 seconds from checkout to delivery | **Valid, Complete** | **Statistical Anomaly** | Transition sequence is valid, but duration feature vector is an extreme temporal outlier. |
-| `[CONFIRM_PAYMENT, PACK_ITEMS, REFUND_ORDER]` | **Valid, Complete** | **Mild Outlier / Rare Path** | Legal cancellation path, but represents < 2% of overall production traces. |
+| 5 consecutive `FAIL_PAYMENT` $\to$ `RETRY_PAYMENT` loops, then success | **Valid, Complete** | **Statistical Anomaly** (path model) | Allowed by FSM grammar, but rarer than the rarest 1% of normal orders' paths (the Markov threshold, set on validation data). |
+| Packed, shipped and delivered all unusually fast | **Valid, Complete** | **Statistical Anomaly** (timing model) | Event order is normal; each step alone is within the normal range, but all three fast together is rare. |
+| `[CONFIRM_PAYMENT, PACK_ITEMS, REFUND_ORDER]` | **Valid, Complete** | **Normal** | Rare (about 2% of orders) but a legitimate variation: well above the Markov threshold. |

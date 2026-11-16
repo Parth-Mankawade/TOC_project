@@ -1,37 +1,28 @@
-"""FastAPI dependencies for database sessions and anomaly service.
-
-Provides clean dependency injection interfaces for FastAPI endpoints,
-reusing connection and service lifecycles without duplicating logic.
-"""
+"""FastAPI dependencies. Everything comes from the app that create_app() built (app.state),
+so each app, including each test app, has its own settings, database and models."""
 
 from __future__ import annotations
 
 from typing import Generator
 
+from fastapi import Request
 from sqlalchemy.orm import Session
 
-from backend.database.connection import get_db
-from backend.services.anomaly_service import AnomalyService, get_anomaly_service
+from backend.core.config import Settings
+from backend.services.anomaly_service import AnomalyService
 
 
-def get_db_session() -> Generator[Session, None, None]:
-    """Yield a database session from the connection pool.
-
-    Reuses backend.database.connection.get_db to guarantee proper session closing.
-
-    Yields:
-        Active SQLAlchemy Session.
-    """
-    yield from get_db()
+def get_settings(request: Request) -> Settings:
+    return request.app.state.settings
 
 
-def get_service() -> AnomalyService:
-    """Return the shared AnomalyService singleton.
+def get_service(request: Request) -> AnomalyService:
+    return request.app.state.service
 
-    Maintains lazy model loading; does not trigger model artifact loading on call.
 
-    Returns:
-        AnomalyService instance.
-    """
-    return get_anomaly_service()
-
+def get_db_session(request: Request) -> Generator[Session, None, None]:
+    session: Session = request.app.state.sessions()
+    try:
+        yield session
+    finally:
+        session.close()

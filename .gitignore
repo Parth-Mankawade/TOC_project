@@ -80,3 +80,6 @@ logs/
 Thumbs.db
 Desktop.ini
 
+
+# Frontend dependencies (installed with `npm install` in frontend/)
+node_modules/

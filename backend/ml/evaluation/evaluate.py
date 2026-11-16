@@ -1,525 +1,215 @@
-"""Isolation Forest and FSM workflow anomaly evaluation module.
+"""EVALUATE checkpoint: measure every model once on the held-out test split.
 
-Evaluates the trained Isolation Forest model on the 1,200 primary test traces
-(700 NORMAL, 500 STATISTICAL_ANOMALY) and evaluates the 1,000 RULE_VIOLATION
-traces separately against the deterministic FSM validator.
+Positive class: STATISTICAL_ANOMALY (legal, complete but suspicious orders); the
+test split's normal orders are the negatives. A rule violation is rejected by
+the FSM by definition (that is what a rule violation is), so violations are
+reported separately and not as a detection rate.
 
-Specification: backend/docs/DATASET_SPEC.md (v1.4, Section 5 & Section 7)
+Headline metric: F1, one number that is high only when most anomalies are caught
+AND most alarms are real. Precision, recall, false-alarm rate, ROC-AUC (for
+models that give a score) and the number caught per anomaly type are reported too.
+
+Models (fitted on the train split; thresholds and the timing model's choice come
+from the validation split; the test split is used only here):
+  always_normal     trivial baseline: never flags anything (F1 = 0)
+  range_rule        non-ML baseline: flag an order if its amount, its number of
+                    failed payments or any step duration is outside the min-max
+                    seen in normal training orders
+  markov_chain      event-order model
+  timing_<name>     each timing-and-amount candidate
+  hybrid            markov_chain OR the chosen timing candidate: what the API uses
+  random_forest     supervised comparison, trained on normal training orders plus
+                    the training rows of SEEN_TYPES only, so the other anomaly
+                    types are new to it at test time
 """
 
 from __future__ import annotations
 
-import csv
-import json
+from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
-from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
+from backend.core.errors import EvaluateError
 from backend.fsm.validator import validate_trace
-from backend.ml.feature_extraction.extractor import (
-    extract_feature_matrix,
-    parse_event_sequence,
+from backend.ml.dataset.audit import (
+    MAX_SINGLE_MEASUREMENT_RECALL,
+    SEPARABILITY_FALSE_ALARM_BUDGET,
+    separability_report,
 )
-from backend.ml.inference.predictor import DEFAULT_MODEL_PATH, load_trained_model
+from backend.ml.dataset.generator import ANOMALY_TYPES, SPLITS
+from backend.ml.dataset.loader import OrderRecord, select
+from backend.ml.markov.model import MarkovPathModel, score_trace
+from backend.ml.timing.features import order_features, step_durations, step_name
+from backend.ml.timing.model import DETECTOR_NAMES, TimingModel, anomaly_scores
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+DEFAULT_RESULTS_PATH = Path(__file__).resolve().parent / "results.json"
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "dataset" / "data"
-DEFAULT_DATASET_PATH = DATA_DIR / "orders_workflow_dataset.csv"
+BASELINES = ["always_normal", "range_rule"]
+MODEL_ORDER = (BASELINES + ["markov_chain"] + [f"timing_{name}" for name in DETECTOR_NAMES]
+               + ["hybrid", "random_forest"])
+SEEN_TYPES = ["CARD_TESTING", "FAST_FULFILMENT", "HIGH_VALUE_QUICK_REFUND"]
+RF_TREES = 200
+RF_RANDOM_STATE = 42
+RF_DECISION_PROBABILITY = 0.5
+DECIMALS = 4  # rounding of reported metrics
 
-EVALUATION_DIR = Path(__file__).resolve().parent
-DEFAULT_RESULTS_PATH = EVALUATION_DIR / "evaluation_results.json"
 
-EXPECTED_COLUMNS = [
-    "trace_id",
-    "event_sequence",
-    "sequence_length",
-    "is_rule_valid",
-    "is_complete",
-    "anomaly_category",
-    "is_ml_anomaly",
-]
-
-TOTAL_EXPECTED_ROWS = 5000
-N_TRAINING_SAMPLES = 2800
-N_NORMAL_TEST = 700
-N_ANOMALY_TEST = 500
-N_PRIMARY_TEST = N_NORMAL_TEST + N_ANOMALY_TEST  # 1,200
-N_RULE_VIOLATION = 1000
-
-SPEC_VERSION = "1.4"
+def _timed(orders: Sequence[OrderRecord]) -> List[Tuple[List[str], List[Any], float]]:
+    return [(o.events, o.timestamps, o.amount) for o in orders]
 
 
 # ---------------------------------------------------------------------------
-# Dataset Loading & Partition Validation
+# Non-ML baseline
 # ---------------------------------------------------------------------------
 
-def load_and_validate_dataset(
-    dataset_path: Optional[Union[str, Path]] = None,
-) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, str]]]:
-    """Load and validate dataset partitions strictly according to DATASET_SPEC.md.
+def _range_observations(order: OrderRecord) -> List[Tuple[str, float]]:
+    observations = [("order_amount", order.amount), ("payment_failures", float(order.events.count("FAIL_PAYMENT")))]
+    for s in step_durations(order.events, order.timestamps):
+        observations.append((step_name(s.from_event, s.to_event), s.seconds))
+    return observations
 
-    Args:
-        dataset_path: Path to dataset CSV. Defaults to DEFAULT_DATASET_PATH.
 
-    Returns:
-        Tuple of (training_rows, primary_test_rows, rule_violation_rows).
+def fit_range_rule(train_normals: Sequence[OrderRecord]) -> Dict[str, Tuple[float, float]]:
+    """Min and max of every measurement over normal training orders."""
+    ranges: Dict[str, Tuple[float, float]] = {}
+    for order in train_normals:
+        for name, value in _range_observations(order):
+            low, high = ranges[name] if name in ranges else (value, value)
+            ranges[name] = (min(low, value), max(high, value))
+    return ranges
+
+
+def range_rule_flags(ranges: Dict[str, Tuple[float, float]], order: OrderRecord) -> bool:
+    for name, value in _range_observations(order):
+        if name not in ranges:
+            raise EvaluateError("a measurement seen in normal training orders", name, order.trace_id)
+        low, high = ranges[name]
+        if not low <= value <= high:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Metrics
+# ---------------------------------------------------------------------------
+
+def _metrics(name: str, test: Sequence[OrderRecord], flags: Sequence[bool],
+             scores: Optional[Sequence[float]] = None) -> Dict[str, Any]:
+    y_true = [int(o.is_anomaly) for o in test]
+    y_pred = [int(f) for f in flags]
+    normal_flags = [f for o, f in zip(test, flags) if not o.is_anomaly]
+    caught_by_type = {
+        t: {"caught": sum(1 for o, f in zip(test, flags) if o.anomaly_type == t and f),
+            "total": sum(1 for o in test if o.anomaly_type == t)}
+        for t in ANOMALY_TYPES
+    }
+    return {
+        "model": name,
+        "f1": round(float(f1_score(y_true, y_pred, zero_division=0)), DECIMALS),
+        "precision": round(float(precision_score(y_true, y_pred, zero_division=0)), DECIMALS),
+        "recall": round(float(recall_score(y_true, y_pred, zero_division=0)), DECIMALS),
+        "false_alarms": int(sum(normal_flags)),
+        "normal_orders": len(normal_flags),
+        "false_alarm_rate": round(sum(normal_flags) / len(normal_flags), DECIMALS),
+        "anomalies_caught": sum(c["caught"] for c in caught_by_type.values()),
+        "anomalous_orders": sum(c["total"] for c in caught_by_type.values()),
+        "roc_auc": None if scores is None else round(float(roc_auc_score(y_true, scores)), DECIMALS),
+        "caught_by_type": caught_by_type,
+    }
+
+
+def _rf_features(timing: TimingModel, markov: MarkovPathModel, order: OrderRecord) -> List[float]:
+    inputs = order_features(timing.stats, order.events, order.timestamps, order.amount)
+    return list(inputs.values()) + [score_trace(markov, order.events)["path_log10_probability"],
+                                    float(len(order.events))]
+
+
+# ---------------------------------------------------------------------------
+# Report
+# ---------------------------------------------------------------------------
+
+def evaluate(orders: Sequence[OrderRecord], markov: MarkovPathModel, timing_models: Dict[str, TimingModel],
+             selection: Dict[str, Any]) -> Dict[str, Any]:
+    """Score every model on the test split and build the report.
 
     Raises:
-        FileNotFoundError: If the dataset file does not exist.
-        ValueError: If row counts, headers, or category partition boundaries are violated.
+        EvaluateError: If the test split lacks normal or anomalous orders, or the
+            chosen timing model is not among the fitted candidates.
     """
-    target = Path(dataset_path) if dataset_path else DEFAULT_DATASET_PATH
-    if not target.exists():
-        raise FileNotFoundError(f"Dataset file not found at: {target}")
-
-    with open(target, "r", newline="", encoding="utf-8") as fh:
-        reader = csv.DictReader(fh)
-        fieldnames = list(reader.fieldnames or [])
-
-        missing_cols = [col for col in EXPECTED_COLUMNS if col not in fieldnames]
-        if missing_cols:
-            raise ValueError(f"Dataset missing required columns: {missing_cols}")
-
-        rows = list(reader)
-
-    total_rows = len(rows)
-    if total_rows != TOTAL_EXPECTED_ROWS:
-        raise ValueError(
-            f"Dataset total row count mismatch: expected {TOTAL_EXPECTED_ROWS}, got {total_rows}."
-        )
-
-    # Partition 1: Training rows [0 : 2800] - 100% NORMAL
-    training_rows = rows[:N_TRAINING_SAMPLES]
-    for idx, r in enumerate(training_rows):
-        if r.get("anomaly_category") != "NORMAL":
-            raise ValueError(
-                f"Training row {idx} ({r.get('trace_id')}): expected category 'NORMAL', "
-                f"got '{r.get('anomaly_category')}'."
-            )
-
-    # Partition 2: Normal test rows [2800 : 3500] - 100% NORMAL
-    normal_test_start = N_TRAINING_SAMPLES
-    normal_test_end = normal_test_start + N_NORMAL_TEST
-    normal_test_rows = rows[normal_test_start:normal_test_end]
-    for idx, r in enumerate(normal_test_rows, start=normal_test_start):
-        if r.get("anomaly_category") != "NORMAL":
-            raise ValueError(
-                f"Normal test row {idx} ({r.get('trace_id')}): expected category 'NORMAL', "
-                f"got '{r.get('anomaly_category')}'."
-            )
-
-    # Partition 3: Statistical anomaly test rows [3500 : 4000] - 100% STATISTICAL_ANOMALY
-    anomaly_test_start = normal_test_end
-    anomaly_test_end = anomaly_test_start + N_ANOMALY_TEST
-    anomaly_test_rows = rows[anomaly_test_start:anomaly_test_end]
-    for idx, r in enumerate(anomaly_test_rows, start=anomaly_test_start):
-        if r.get("anomaly_category") != "STATISTICAL_ANOMALY":
-            raise ValueError(
-                f"Anomaly test row {idx} ({r.get('trace_id')}): expected category 'STATISTICAL_ANOMALY', "
-                f"got '{r.get('anomaly_category')}'."
-            )
-
-    # Partition 4: Rule violation benchmark rows [4000 : 5000] - 100% RULE_VIOLATION
-    rule_violation_start = anomaly_test_end
-    rule_violation_end = rule_violation_start + N_RULE_VIOLATION
-    rule_violation_rows = rows[rule_violation_start:rule_violation_end]
-    for idx, r in enumerate(rule_violation_rows, start=rule_violation_start):
-        if r.get("anomaly_category") != "RULE_VIOLATION":
-            raise ValueError(
-                f"Rule violation row {idx} ({r.get('trace_id')}): expected category 'RULE_VIOLATION', "
-                f"got '{r.get('anomaly_category')}'."
-            )
-
-    # Primary ML test set is strictly the 700 normal test + 500 statistical anomaly test traces
-    primary_test_rows = normal_test_rows + anomaly_test_rows
-
-    return training_rows, primary_test_rows, rule_violation_rows
-
-
-# ---------------------------------------------------------------------------
-# Primary ML Evaluation
-# ---------------------------------------------------------------------------
-
-def evaluate_primary_ml(model: Any, test_rows: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Evaluate Isolation Forest on the primary 1,200 test traces.
-
-    Ground Truth Construction:
-      - Ground truth labels are constructed strictly from the `is_ml_anomaly` column:
-        * is_ml_anomaly == False (or "False") -> NORMAL (0, Negative class)
-        * is_ml_anomaly == True  (or "True")  -> ANOMALY (1, Positive class)
-      - Validates category consistency:
-        * anomaly_category == "NORMAL" must match is_ml_anomaly == False
-        * anomaly_category == "STATISTICAL_ANOMALY" must match is_ml_anomaly == True
-        * RULE_VIOLATION must never appear in primary ML evaluation
-      - Missing, blank, or unrecognized is_ml_anomaly raises ValueError.
-
-    Scoring and Validation:
-      - Continuous anomaly score: anomaly_score = -model.decision_function(X)
-      - Binary prediction: predict == -1 => 1 (ANOMALY); predict == 1 => 0 (NORMAL)
-      - Validates output shapes, finite numerical values, and strictly rejects unexpected predictions.
-      - Verifies that predict() and anomaly_score classifications strictly agree.
-
-    Args:
-        model: Trained Isolation Forest estimator.
-        test_rows: List of 1,200 test row dictionaries.
-
-    Returns:
-        Structured dictionary of ML performance metrics.
-
-    Raises:
-        ValueError: If test_rows structure, counts, categories, labels, shapes, or scores are invalid.
-        RuntimeError: If predict() returns unexpected values or disagrees with anomaly_score.
-    """
-    if len(test_rows) != N_PRIMARY_TEST:
-        raise ValueError(
-            f"Primary ML evaluation requires exactly {N_PRIMARY_TEST} traces, got {len(test_rows)}."
-        )
-
-    # 1. Construct ground truth labels strictly from is_ml_anomaly
-    # Never use label columns as model features (data leakage prevention)
-    y_true_list: List[int] = []
-    sequences: List[str] = []
-
-    actual_normal_count = 0
-    actual_anomaly_count = 0
-
-    for idx, row in enumerate(test_rows):
-        trace_id = row.get("trace_id", f"index_{idx}")
-        cat = row.get("anomaly_category")
-        raw_ml_anomaly = row.get("is_ml_anomaly")
-
-        # RULE_VIOLATION must never appear in the primary ML test set
-        if cat == "RULE_VIOLATION":
-            raise ValueError(
-                f"RULE_VIOLATION trace {trace_id} must never appear in the primary ML test set."
-            )
-
-        # Missing or blank is_ml_anomaly is rejected
-        if raw_ml_anomaly is None or (isinstance(raw_ml_anomaly, str) and not raw_ml_anomaly.strip()):
-            raise ValueError(
-                f"Missing or blank 'is_ml_anomaly' label in primary test set at trace {trace_id}."
-            )
-
-        # Parse is_ml_anomaly into boolean
-        if isinstance(raw_ml_anomaly, bool):
-            is_anomaly_val = raw_ml_anomaly
-        elif isinstance(raw_ml_anomaly, str):
-            val_clean = raw_ml_anomaly.strip().lower()
-            if val_clean == "true":
-                is_anomaly_val = True
-            elif val_clean == "false":
-                is_anomaly_val = False
-            else:
-                raise ValueError(
-                    f"Unrecognized 'is_ml_anomaly' value '{raw_ml_anomaly}' at trace {trace_id}. "
-                    f"Expected 'True' or 'False'."
-                )
-        else:
-            raise ValueError(
-                f"Invalid 'is_ml_anomaly' type {type(raw_ml_anomaly).__name__} at trace {trace_id}."
-            )
-
-        # Ground truth label: 0 for NORMAL, 1 for ANOMALY
-        ground_truth_label = 1 if is_anomaly_val else 0
-
-        # Validate category and label consistency
-        if cat == "NORMAL":
-            if is_anomaly_val:
-                raise ValueError(
-                    f"Inconsistent labels at trace {trace_id}: category is 'NORMAL' "
-                    f"but is_ml_anomaly is {raw_ml_anomaly}."
-                )
-            actual_normal_count += 1
-        elif cat == "STATISTICAL_ANOMALY":
-            if not is_anomaly_val:
-                raise ValueError(
-                    f"Inconsistent labels at trace {trace_id}: category is 'STATISTICAL_ANOMALY' "
-                    f"but is_ml_anomaly is {raw_ml_anomaly}."
-                )
-            actual_anomaly_count += 1
-        else:
-            raise ValueError(
-                f"Invalid anomaly_category '{cat}' at trace {trace_id}. "
-                f"Only 'NORMAL' and 'STATISTICAL_ANOMALY' are permitted in primary ML evaluation."
-            )
-
-        y_true_list.append(ground_truth_label)
-        sequences.append(row["event_sequence"])
-
-    if actual_normal_count != N_NORMAL_TEST or actual_anomaly_count != N_ANOMALY_TEST:
-        raise ValueError(
-            f"Ground truth category mismatch: expected {N_NORMAL_TEST} NORMAL and "
-            f"{N_ANOMALY_TEST} STATISTICAL_ANOMALY; got {actual_normal_count} and {actual_anomaly_count}."
-        )
-
-    y_true = np.array(y_true_list, dtype=np.int64)
-
-    # 2. Extract features using approved feature extraction implementation
-    X_test = extract_feature_matrix(sequences)
-
-    # 3. Model inference and scoring
-    try:
-        raw_decisions_out = model.decision_function(X_test)
-    except Exception as exc:
-        raise RuntimeError(f"Error executing model.decision_function(): {exc}") from exc
-
-    try:
-        raw_predictions_out = model.predict(X_test)
-    except Exception as exc:
-        raise RuntimeError(f"Error executing model.predict(): {exc}") from exc
-
-    # Validate output dimensions and shapes
-    raw_decisions = np.asarray(raw_decisions_out, dtype=np.float64)
-    raw_predictions = np.asarray(raw_predictions_out)
-
-    if raw_decisions.ndim == 2 and raw_decisions.shape == (N_PRIMARY_TEST, 1):
-        raw_decisions = raw_decisions.ravel()
-    elif raw_decisions.ndim != 1 or raw_decisions.shape != (N_PRIMARY_TEST,):
-        raise ValueError(
-            f"Expected decision_function to return exactly {N_PRIMARY_TEST} scores, "
-            f"got shape {raw_decisions.shape}."
-        )
-
-    if raw_predictions.ndim == 2 and raw_predictions.shape == (N_PRIMARY_TEST, 1):
-        raw_predictions = raw_predictions.ravel()
-    elif raw_predictions.ndim != 1 or raw_predictions.shape != (N_PRIMARY_TEST,):
-        raise ValueError(
-            f"Expected predict to return exactly {N_PRIMARY_TEST} predictions, "
-            f"got shape {raw_predictions.shape}."
-        )
-
-    # Validate finite numerical values
-    if not np.all(np.isfinite(raw_decisions)):
-        raise ValueError("decision_function output contains non-finite values (NaN or Inf).")
-
-    if not np.all(np.isfinite(raw_predictions)):
-        raise ValueError("predict output contains non-finite values (NaN or Inf).")
-
-    # Reject unexpected predictions: must be strictly 1 (NORMAL) or -1 (ANOMALY)
-    invalid_preds = [int(p) for p in raw_predictions if p not in (1, -1)]
-    if invalid_preds:
-        raise RuntimeError(
-            f"Unexpected model prediction value(s) encountered: {invalid_preds[:5]}. "
-            f"Expected only 1 (NORMAL) or -1 (ANOMALY)."
-        )
-
-    raw_predictions = raw_predictions.astype(np.int64)
-
-    # Negate decision function so higher score = greater anomaly likelihood
-    anomaly_scores = -raw_decisions
-
-    # 4. Enforce strict agreement between predict and score
-    # predict == -1 <=> anomaly_score > 0
-    # predict == 1  <=> anomaly_score <= 0
-    pred_is_anomaly = (raw_predictions == -1)
-    score_is_anomaly = (anomaly_scores > 0.0)
-    disagreements = np.where(pred_is_anomaly != score_is_anomaly)[0]
-
-    if len(disagreements) > 0:
-        first_bad = disagreements[0]
-        raise RuntimeError(
-            f"Prediction and score disagreement at sample index {first_bad}: "
-            f"predict()={raw_predictions[first_bad]}, "
-            f"anomaly_score={anomaly_scores[first_bad]}, "
-            f"raw_decision={raw_decisions[first_bad]}."
-        )
-
-    # 5. Convert predictions to binary labels: 1 = ANOMALY, 0 = NORMAL
-    y_pred = np.where(raw_predictions == -1, 1, 0)
-
-    predicted_normal_count = int(np.sum(y_pred == 0))
-    predicted_anomaly_count = int(np.sum(y_pred == 1))
-
-    # 6. Calculate metrics
-    # Confusion matrix layout for labels=[0, 1]:
-    # [[TN, FP],
-    #  [FN, TP]]
-    cm = confusion_matrix(y_true, y_pred, labels=[0, 1])
-    cm_list: List[List[int]] = [[int(val) for val in row] for row in cm]
-
-    acc = float(accuracy_score(y_true, y_pred))
-    prec = float(precision_score(y_true, y_pred, zero_division=0))
-    rec = float(recall_score(y_true, y_pred, zero_division=0))
-    f1 = float(f1_score(y_true, y_pred, zero_division=0))
-    roc_auc = float(roc_auc_score(y_true, anomaly_scores))
-
-    return {
-        "evaluation_sample_count": len(test_rows),
-        "actual_normal_count": actual_normal_count,
-        "actual_anomaly_count": actual_anomaly_count,
-        "predicted_normal_count": predicted_normal_count,
-        "predicted_anomaly_count": predicted_anomaly_count,
-        "confusion_matrix": cm_list,
-        "accuracy": acc,
-        "precision": prec,
-        "recall": rec,
-        "f1_score": f1,
-        "roc_auc": roc_auc,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Separate FSM Benchmark
-# ---------------------------------------------------------------------------
-
-def evaluate_fsm_benchmark(rule_rows: List[Dict[str, str]]) -> Dict[str, Any]:
-    """Evaluate 1,000 RULE_VIOLATION traces separately against deterministic FSM.
-
-    Args:
-        rule_rows: List of 1,000 rule violation trace dictionaries.
-
-    Returns:
-        Structured dictionary of FSM benchmark metrics.
-    """
-    total = len(rule_rows)
-    if total != N_RULE_VIOLATION:
-        raise ValueError(
-            f"FSM benchmark requires exactly {N_RULE_VIOLATION} traces, got {total}."
-        )
-
-    correctly_rejected = 0
-    incorrectly_accepted = 0
-
-    for r in rule_rows:
-        events = parse_event_sequence(r["event_sequence"])
-        validation_result = validate_trace(events)
-        if not validation_result["is_valid"]:
-            correctly_rejected += 1
-        else:
-            incorrectly_accepted += 1
-
-    detection_rate = float(correctly_rejected / total) if total > 0 else 0.0
-
-    return {
-        "total_rule_violation_traces": total,
-        "correctly_rejected": correctly_rejected,
-        "incorrectly_accepted": incorrectly_accepted,
-        "detection_rate": detection_rate,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Master Evaluation Runner
-# ---------------------------------------------------------------------------
-
-def run_evaluation(
-    dataset_path: Optional[Union[str, Path]] = None,
-    model_path: Optional[Union[str, Path]] = None,
-    results_path: Optional[Union[str, Path]] = None,
-    save_results: bool = True,
-) -> Dict[str, Any]:
-    """Execute complete evaluation workflow: Primary ML evaluation + FSM benchmark.
-
-    Args:
-        dataset_path: Path to dataset CSV file. Defaults to DEFAULT_DATASET_PATH.
-        model_path: Path to model joblib artifact. Defaults to DEFAULT_MODEL_PATH.
-        results_path: Path to save evaluation JSON. Defaults to DEFAULT_RESULTS_PATH.
-        save_results: Whether to save results to disk.
-
-    Returns:
-        Complete evaluation results dictionary.
-    """
-    # 1. Load and validate dataset
-    _, primary_test_rows, rule_violation_rows = load_and_validate_dataset(dataset_path)
-
-    # 2. Load trained model artifact and metadata
-    model, metadata = load_trained_model(model_path=model_path)
-
-    # 3. Primary ML evaluation (1,200 traces: 700 NORMAL, 500 STATISTICAL_ANOMALY)
-    ml_metrics = evaluate_primary_ml(model, primary_test_rows)
-
-    # 4. Separate FSM benchmark (1,000 RULE_VIOLATION traces)
-    fsm_metrics = evaluate_fsm_benchmark(rule_violation_rows)
-
-    # 5. Assemble structured evaluation report
-    results: Dict[str, Any] = {
-        "dataset_spec_version": SPEC_VERSION,
-        "model_metadata": metadata,
-        "primary_ml_evaluation": ml_metrics,
-        "fsm_benchmark": fsm_metrics,
-    }
-
-    # 6. Save JSON results if requested
-    if save_results:
-        target_json = Path(results_path) if results_path else DEFAULT_RESULTS_PATH
-        target_json.parent.mkdir(parents=True, exist_ok=True)
-        with open(target_json, "w", encoding="utf-8") as fh:
-            json.dump(results, fh, indent=2)
-
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Formatted Report Generator
-# ---------------------------------------------------------------------------
-
-def format_evaluation_report(results: Dict[str, Any]) -> str:
-    """Format evaluation results into a human-readable ASCII report."""
-    ml = results["primary_ml_evaluation"]
-    fsm = results["fsm_benchmark"]
-    meta = results.get("model_metadata", {})
-
-    cm = ml["confusion_matrix"]
-    tn, fp = cm[0][0], cm[0][1]
-    fn, tp = cm[1][0], cm[1][1]
-
-    lines = [
-        "=" * 78,
-        "  WORKFLOW ANOMALY DETECTION EVALUATION REPORT",
-        "  Dual-Engine Architecture: Deterministic FSM + Isolation Forest ML",
-        f"  Dataset Spec Version: {results.get('dataset_spec_version', 'N/A')}",
-        "=" * 78,
-        "",
-        "1. MODEL CONFIGURATION & METADATA",
-        f"   - Model Name:              {meta.get('model_name', 'N/A')}",
-        f"   - Estimators:              {meta.get('n_estimators', 'N/A')}",
-        f"   - Contamination:           {meta.get('contamination', 'N/A')}",
-        f"   - Random State:            {meta.get('random_state', 'N/A')}",
-        f"   - Training Sample Count:   {meta.get('training_sample_count', 'N/A')} (100% clean NORMAL)",
-        f"   - Feature Count:           {len(meta.get('feature_names', []))} engineered features",
-        "",
-        "2. PRIMARY ML EVALUATION (1,200 Held-Out FSM-Valid Traces)",
-        f"   - Total ML Test Samples:   {ml['evaluation_sample_count']}",
-        f"   - Actual Normal Traces:    {ml['actual_normal_count']}",
-        f"   - Actual Anomaly Traces:   {ml['actual_anomaly_count']}",
-        f"   - Predicted Normal:        {ml['predicted_normal_count']}",
-        f"   - Predicted Anomaly:       {ml['predicted_anomaly_count']}",
-        "",
-        "   Confusion Matrix:",
-        f"     Actual Normal:   TN = {tn:<5}  FP = {fp:<5}",
-        f"     Actual Anomaly:  FN = {fn:<5}  TP = {tp:<5}",
-        "",
-        "   Performance Metrics:",
-        f"     - Accuracy:              {ml['accuracy']:.4f}  ({ml['accuracy'] * 100:.2f}%)",
-        f"     - Precision:             {ml['precision']:.4f}  ({ml['precision'] * 100:.2f}%)",
-        f"     - Recall:                {ml['recall']:.4f}  ({ml['recall'] * 100:.2f}%)",
-        f"     - F1-Score:              {ml['f1_score']:.4f}",
-        f"     - ROC-AUC:               {ml['roc_auc']:.4f}",
-        "",
-        "3. SEPARATE FSM BENCHMARK (1,000 Rule Violation Traces)",
-        f"   - Total Rule Violations:   {fsm['total_rule_violation_traces']}",
-        f"   - Correctly Rejected:      {fsm['correctly_rejected']}",
-        f"   - Incorrectly Accepted:    {fsm['incorrectly_accepted']}",
-        f"   - FSM Detection Rate:      {fsm['detection_rate']:.4f}  ({fsm['detection_rate'] * 100:.2f}%)",
-        "",
-        "=" * 78,
+    test = [o for o in orders if o.split == "test" and o.category in ("NORMAL", "STATISTICAL_ANOMALY")]
+    n_anomalous = sum(o.is_anomaly for o in test)
+    n_normal = len(test) - n_anomalous
+    if n_anomalous == 0 or n_normal == 0:
+        raise EvaluateError("normal and anomalous orders in the test split",
+                            f"{n_normal} normal, {n_anomalous} anomalous", "test split")
+    chosen = selection["chosen"]
+    if chosen not in timing_models or set(timing_models) != set(DETECTOR_NAMES):
+        raise EvaluateError(f"fitted candidates {DETECTOR_NAMES} including the chosen one", sorted(timing_models),
+                            f"chosen={chosen}")
+
+    train_normals = select(orders, "NORMAL", "train")
+    timed_test = _timed(test)
+
+    ranges = fit_range_rule(train_normals)
+    path = [score_trace(markov, o.events) for o in test]
+    timing_scores = {name: [float(s) for s in anomaly_scores(model, timed_test)]
+                     for name, model in timing_models.items()}
+
+    models = [
+        _metrics("always_normal", test, [False] * len(test)),
+        _metrics("range_rule", test, [range_rule_flags(ranges, o) for o in test]),
+        _metrics("markov_chain", test, [p["is_ml_anomaly"] for p in path], [p["anomaly_score"] for p in path]),
     ]
-    return "\n".join(lines)
+    for name in DETECTOR_NAMES:
+        scores = timing_scores[name]
+        models.append(_metrics(f"timing_{name}", test, [s > 0 for s in scores], scores))
+    models.append(_metrics("hybrid", test, [p["is_ml_anomaly"] or s > 0 for p, s in zip(path, timing_scores[chosen])]))
 
+    chosen_model = timing_models[chosen]
+    rf_train = train_normals + [o for o in select(orders, "STATISTICAL_ANOMALY", "train")
+                                if o.anomaly_type in SEEN_TYPES]
+    forest = RandomForestClassifier(n_estimators=RF_TREES, random_state=RF_RANDOM_STATE, class_weight="balanced")
+    forest.fit([_rf_features(chosen_model, markov, o) for o in rf_train], [int(o.is_anomaly) for o in rf_train])
+    rf_probability = forest.predict_proba([_rf_features(chosen_model, markov, o) for o in test])[:, 1]
+    rf = _metrics("random_forest", test, [p >= RF_DECISION_PROBABILITY for p in rf_probability],
+                  [float(p) for p in rf_probability])
+    rf["trained_on_types"] = list(SEEN_TYPES)
+    rf["never_seen_types"] = [t for t in ANOMALY_TYPES if t not in SEEN_TYPES]
+    models.append(rf)
 
-if __name__ == "__main__":
-    eval_results = run_evaluation()
-    print(format_evaluation_report(eval_results))
-    print(f"\nResults saved to: {DEFAULT_RESULTS_PATH}")
+    violations = select(orders, "RULE_VIOLATION", "test")
+    fsm_errors = [validate_trace(o.events)["error"] for o in violations]
+    by_name = {m["model"]: m for m in models}
+    return {
+        "dataset": {
+            "orders_by_split": {split: dict(sorted(Counter(o.category for o in orders if o.split == split).items()))
+                                for split in SPLITS},
+            "anomaly_types": list(ANOMALY_TYPES),
+            "test_anomaly_share": round(n_anomalous / len(test), DECIMALS),
+        },
+        "separability": {
+            "false_alarm_budget": SEPARABILITY_FALSE_ALARM_BUDGET,
+            "trivial_if_recall_at_least": MAX_SINGLE_MEASUREMENT_RECALL,
+            "by_type": {t: dict(r, recall=round(r["recall"], DECIMALS))
+                        for t, r in separability_report(orders).items()},
+        },
+        "model_selection": selection,
+        "headline": {
+            "metric": "f1",
+            "model": "hybrid",
+            "hybrid": by_name["hybrid"]["f1"],
+            "always_normal": by_name["always_normal"]["f1"],
+            "range_rule": by_name["range_rule"]["f1"],
+        },
+        "test": {"models": models},
+        "rule_violations": {
+            "orders": len(violations),
+            "rejected_by_fsm": sum(1 for e in fsm_errors if e is not None),
+            "by_type": dict(sorted(Counter(o.anomaly_type for o in violations).items())),
+            "by_fsm_error": dict(sorted(Counter(e["error_type"] for e in fsm_errors if e is not None).items())),
+            "note": "Rejected by definition: this checks the generated violations, it is not a detection rate.",
+        },
+    }
