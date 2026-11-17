@@ -2,7 +2,9 @@
 
 Problem statement 9: *Anomaly Detection in Process Workflows Using Automata and ML.* This guide
 follows one path through the code, from the data to the dashboard, and gives the real numbers.
-Every number here can be reproduced with `python -m backend.ml.pipeline` (fixed seed 42).
+Every number here can be reproduced with `python -m backend.ml.pipeline` (fixed seed 42) and, for the
+five-seed tables, `python -m backend.ml.evaluation.benchmark`. The result tables in section 7 are
+written into this file from the two JSON reports by `python -m backend.ml.evaluation.report`.
 
 ---
 
@@ -12,8 +14,10 @@ Every number here can be reproduced with `python -m backend.ml.pipeline` (fixed 
    of events, and the automaton decides whether the string follows the workflow rules.
 2. Orders that break a rule are **rule violations**; legal orders that have not finished are **in progress**.
 3. Legal, finished orders are checked by **two machine-learning models** trained on normal orders: a
-   **Markov chain** (is this order of events rare?) and a **timing-and-amount model** (are the times,
-   amount and outcome unusual together?). If either flags the order, it is a **statistical anomaly**.
+   **Markov chain** (is this order of events rare?) and a **timing-and-amount model** with three checks
+   (are the times, amount and outcome far from typical normal orders? were the steps consistently fast
+   or slow? is any value far outside its normal range?). The four checks share **one threshold**. If
+   any check is above it, the order is a **statistical anomaly**.
 4. Every verdict comes with an explanation, and a dashboard shows the order's path on the automaton,
    the unusual transitions and the anomaly scores.
 
@@ -24,9 +28,9 @@ Every number here can be reproduced with `python -m backend.ml.pipeline` (fixed 
 | Workflow states, events, transition rules | `backend/fsm/states.py`, `transitions.py` |
 | Generate or collect normal and anomalous logs | `backend/ml/dataset/generator.py` (generated, seeded) |
 | Finite-state model to find invalid transitions | `backend/fsm/validator.py` |
-| ML for statistical or sequential anomalies | `backend/ml/markov/` (sequential), `backend/ml/timing/` (statistical) |
+| ML for statistical or sequential anomalies | `backend/ml/markov/` (sequential), `backend/ml/timing/` (statistical), `backend/ml/hybrid.py` (one threshold) |
 | Combine rule violations with ML scores | `backend/pipeline/analyzer.py` |
-| Evaluate, explain each flag | `backend/ml/evaluation/evaluate.py`, explanations in `analyzer.py` |
+| Evaluate, explain each flag | `backend/ml/evaluation/evaluate.py` and `benchmark.py`, explanations in `analyzer.py` |
 | TOC concepts: state-transition systems, DFA, regular languages, reachability | `backend/fsm/` incl. `reachability.py` |
 | ML techniques: Isolation Forest, clustering, Random Forest, sequence models | all four are trained and compared |
 | Dashboard: paths, unusual transitions, anomaly scores | `frontend/` |
@@ -108,18 +112,19 @@ Times between events are **log-normal** (always positive, sometimes much longer 
 
 ### Five anomaly types (legal and complete, but suspicious)
 
-| Type | What makes it suspicious | Which model should see it |
+| Type | What makes it suspicious | Which check should see it |
 | :--- | :--- | :--- |
-| Card testing | 2–6 failed payments, retried a bit faster than people, small amount | Markov (many failures) + timing |
-| Repeated payment failure | 2–6 failed payments at normal pace | Markov (event order) |
-| Fast fulfilment | packing, shipping and delivery all faster than normal at once | timing |
-| Stalled delivery | delivery ≈ 9 days instead of ≈ 3 | timing |
-| High-value quick refund | large amount refunded ≈ 30 min after payment | timing (combination of amount + outcome + time) |
+| Card testing | 2–6 failed payments, retried a bit faster than people, small amount | path (many failures), cluster |
+| Repeated payment failure | 2–6 failed payments at normal pace | path (event order), cluster |
+| Fast fulfilment | packing, shipping and delivery all faster than normal at once | trend |
+| Stalled delivery | delivery ≈ 9 days instead of ≈ 3 | deviation |
+| High-value quick refund | large amount refunded ≈ 30 min after payment | cluster |
 
 **Key design rule: no giveaway feature.** Each type overlaps normal orders on every single
-measurement, so a simple threshold cannot catch it; only combinations or sequences are unusual.
-`audit.py` checks this: for each type, the best single measurement (at ≤ 1% false alarms) catches
-only 37–81%, and a test fails if any type reaches 90%.
+measurement. `audit.py` checks this: for each type, the best single measurement catches only 37–81%
+when it may flag at most 1% of normal orders, and a test fails if any type reaches 90%. A single
+measurement catches more if more false alarms are allowed; the small false-alarm budget is what makes
+the task hard.
 
 *Why this matters:* an earlier version had anomalies far outside normal ranges (e.g. amounts of
 40,000+). A plain "outside the normal range" rule then beat the ML, which made the ML pointless.
@@ -134,7 +139,7 @@ duplicate event, event after the end, unknown event. Each is invalid by construc
 | Split | Normal | Anomalies | Used for |
 | :--- | ---: | ---: | :--- |
 | train | 4,000 | 500 | fitting the models (normal orders only) |
-| validation | 2,000 | 100 | setting thresholds, choosing the timing model |
+| validation | 2,000 | 100 | scaling the checks, setting the threshold, choosing the detector |
 | test | 5,000 | 250 (+500 violations) | the final results, used once |
 
 About 5% of test orders are anomalies: rare, like a real review queue.
@@ -156,19 +161,33 @@ P(order)         = product of P(event | state) over its steps
 Learned values, for example: P(CONFIRM_PAYMENT | ORDER_CREATED) = 0.826, P(FAIL_PAYMENT |
 ORDER_CREATED) = 0.117, P(DELIVER_ITEMS | SHIPPED) = 1.000.
 
-**Decision:** compute log₁₀ P(path) for the 2,000 normal *validation* orders; the threshold is the
-**1st percentile** of those values (≈ "rarer than 1 in 1,990 orders"). An order whose path is rarer
-is flagged.
+**Scale:** compute log₁₀ P(path) for the 2,000 normal *validation* orders. Two reference points are
+kept: the **median** (a typical path: 75.8% of orders) and the **1st percentile** (the rarest-1% point:
+about 1 in 1,990 orders). They give every path a **level**: 0 at the median, 1 at the rarest-1% point.
+
+**Decision:** the path is flagged when its level is above the shared threshold (section 6). With the
+current threshold, level 1.164, that means paths rarer than about 1 in 6,623 orders; 0.45% of normal
+validation orders are.
 
 ```
 path score = threshold − log₁₀ P(path)        > 0 means flagged; +1 means 10× rarer than the threshold
 ```
 
-Example: 5 failed payments, then a normal delivery. P(FAIL_PAYMENT | ORDER_CREATED) = 0.123 five
-times gives 0.123⁵ ≈ 2.9 × 10⁻⁵ for that step alone. The whole path occurs in about 1 in 292,000
-normal orders → flagged.
+Example: failed payments, each followed by a retry, then a normal delivery. One fail-and-retry loop
+multiplies the path probability by 0.117 × 0.744 ≈ 0.087.
+
+| Failed payments | Path occurs in | Path score | Flagged |
+| ---: | :--- | ---: | :--- |
+| 2 | about 1 in 174 orders | −1.58 | no |
+| 3 | about 1 in 1,990 orders | −0.52 | no |
+| 4 | about 1 in 22,813 orders | 0.54 | yes |
+| 5 | about 1 in 261,582 orders | 1.60 | yes |
 
 **What it cannot see:** times and amounts. A normal-looking path that happened too fast looks normal to it.
+
+**A limit of this chain:** the next event depends only on the current state, so a first payment
+attempt and an attempt after three failures get the same probabilities. A chain whose state also
+counts the failed payments was measured and did not improve the results (section 7), so it is not used.
 
 ---
 
@@ -202,8 +221,8 @@ All are trained on normal orders only (unsupervised), on standardized inputs:
 | **k-means clustering** (k chosen by silhouette score → 5 clusters) | normal orders form groups | distance to the nearest cluster centre |
 | Local Outlier Factor (20 neighbours) | unusual points sit in sparser regions than their neighbours | negative of sklearn's score |
 
-Each threshold = the **99th percentile** of the scores of normal validation orders, so about 1% of
-normal orders are flagged.
+For the comparison below, each candidate flags the orders above the **99th percentile** of its
+scores on normal validation orders, so about 1% of normal orders.
 
 ### Choosing one, on the validation split only
 
@@ -214,7 +233,25 @@ normal orders are flagged.
 | Local Outlier Factor | 0.389 |
 
 Rule fixed in advance: highest validation F1, preferring a PS9-named model if it is within 0.02 of
-the best. The test split was not used for this choice.
+the best. The test split was not used for this choice. The chosen detector is the **cluster check**.
+
+### Two more checks, straight from the z-scores (`features.py: timing_summary`)
+
+The cluster check measures one distance over all seven inputs. An order whose steps are each a little
+fast, or whose single delivery step is slow, has six ordinary inputs and stays under that distance.
+Two checks cover those cases:
+
+| Check | Formula | High when |
+| :--- | :--- | :--- |
+| **trend** | \|sum of the step z-scores\| / √(number of steps) | every step is a little fast, or a little slow |
+| **deviation** | −log₁₀ of the chi-square tail probability of (sum of squared step z-scores + squared amount z-score), one degree of freedom per value | one value, or several, are far from normal |
+
+Under normal behaviour each z-score has mean 0 and variance 1, so the trend value is about 0.7 for a
+typical order whatever its length, and the chi-square tail probability says how often normal orders
+have a sum of squares that large. Neither check has anything to fit beyond the z-score statistics.
+
+Like the path, each check gets a **level** from the normal validation orders: 0 at their median,
+1 at their 99th percentile.
 
 ---
 
@@ -223,12 +260,26 @@ the best. The test split was not used for this choice.
 ```
 order ─► FSM ─┬─ invalid ─────────────► RULE_VIOLATION        (severity CRITICAL; no ML: the rules decide)
               ├─ valid, not finished ─► VALID_INCOMPLETE      (INFO; lists the endings still reachable)
-              └─ valid, finished ─────► Markov chain  ┐
-                                         timing model ┴─ either flags ─► STATISTICAL_ANOMALY (WARNING)
-                                                        neither flags ─► NORMAL (INFO)
+              └─ valid, finished ─────► path level      (Markov chain)  ┐
+                                         cluster level   (k-means)       │ highest level
+                                         trend level                     ├─ above the threshold ─► STATISTICAL_ANOMALY (WARNING)
+                                         deviation level                 ┘ otherwise ───────────► NORMAL (INFO)
 ```
 
-The timing model runs only when timestamps and the amount are supplied.
+The three timing checks run only when timestamps and the amount are supplied; without them the path
+check decides alone, under the same threshold.
+
+### One threshold for the four checks (`backend/ml/hybrid.py`)
+
+The **hybrid level** of an order is the highest of its four levels. `calibrate()` computes it for the
+2,000 normal validation orders and sets the threshold at the level that **1.5%** of them exceed
+(currently 1.164). Alone, the checks flag 0.45% (path), 0.45% (cluster), 0.45% (trend) and 0.35%
+(deviation) of normal validation orders; a few orders are flagged by more than one.
+
+Why not let each check flag its own 1% and take the OR, as the earlier version did with two checks?
+With four checks that would flag up to 4% of normal orders. One threshold keeps the total fixed, and
+gives the hybrid one score, so ROC-AUC and PR-AUC can be reported for it. 1.5% is what the earlier
+two-check OR flagged on validation data (1.45% to 1.75% over five seeds), so the results stay comparable.
 
 **Why ML is not used for rule violations:** the automaton already decides them exactly. Measuring
 the automaton on violations would be circular, since a violation *is* what the automaton rejects.
@@ -242,8 +293,11 @@ Every result has a summary, a root cause, key factors and a recommended action:
   (0.12 five times).
 - **Unusual value**: its **percentile** among normal orders is outside the middle 95%, e.g.
   "took 1.2 h, faster than 98.1% of normal orders".
-- **Combination**: when no single value is unusual but the timing model still flags the order, the
-  explanation says so and lists the values furthest from normal.
+- **Which check flagged it**: the explanation gives one cause per flagged check ("its steps were
+  consistently faster than normal", "one or more of its values are far outside their normal range",
+  "its times, amount and outcome are far from those of typical normal orders") and lists every check's score.
+- When no single value is outside the middle 95% but a check still flags the order, the explanation
+  says so and lists the values furthest from typical.
 
 ---
 
@@ -255,38 +309,142 @@ Metrics, with the positive class = anomaly:
 - **Recall**: share of anomalies caught.
 - **F1**: 2 · P · R / (P + R), high only when both are high. This is the headline metric.
   (Accuracy is misleading here: always answering "normal" is already 95% accurate.)
+- **False-alarm rate**: share of normal orders flagged.
+- **ROC-AUC**: how well a score ranks anomalies above normal orders (0.5 = random, 1 = perfect).
+- **PR-AUC** (average precision): the same idea, but it counts false alarms against the number of
+  real anomalies, so it is the more telling one when anomalies are rare. A model that only gives a
+  yes/no answer has neither.
 
-| Model | F1 | Precision | Recall | Caught / 250 | False alarms / 5,000 |
+The baselines:
+
+- **Tuned range rule** (no ML): every measurement gets a band that leaves the same share of normal
+  training values outside on each side, and the band width is set on normal validation orders so that
+  the rule flags as many of them as the hybrid does.
+- **z-score sum OR Markov chain** (no fitted detector): the sum of squared z-scores flagging its top
+  1% of normal validation orders, OR the Markov chain flagging its rarest 1%.
+- The **untuned range rule** (outside the min–max seen in training) is kept for reference; it is a
+  weak baseline because nothing about it is tuned.
+
+### Seed 42: the dataset in the repository (test split)
+
+<!-- generated:test-results:start -->
+| Model | F1 | Precision | Recall | PR-AUC | Caught / 250 | False alarms / 5,000 |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Always "normal" (trivial baseline) | 0.000 | 0.000 | 0.000 | – | 0 | 0 (0.0%) |
+| Range rule, untuned (outside the training min-max) | 0.335 | 0.633 | 0.228 | – | 57 | 33 (0.7%) |
+| Range rule, tuned to the hybrid's false-alarm budget | 0.426 | 0.478 | 0.384 | 0.398 | 96 | 105 (2.1%) |
+| z-score sum OR Markov chain (no fitted detector) | 0.485 | 0.548 | 0.436 | – | 109 | 90 (1.8%) |
+| Markov chain alone (path check) | 0.353 | 0.589 | 0.252 | 0.329 | 63 | 44 (0.9%) |
+| Isolation Forest alone | 0.271 | 0.517 | 0.184 | 0.411 | 46 | 43 (0.9%) |
+| k-means alone | 0.466 | 0.662 | 0.360 | 0.507 | 90 | 46 (0.9%) |
+| Local Outlier Factor alone | 0.338 | 0.596 | 0.236 | 0.402 | 59 | 40 (0.8%) |
+| Trend check alone | 0.335 | 0.633 | 0.228 | 0.349 | 57 | 33 (0.7%) |
+| Deviation check alone | 0.303 | 0.487 | 0.220 | 0.305 | 55 | 58 (1.2%) |
+| **Hybrid: the four checks, one threshold (the app)** | **0.552** | 0.595 | 0.516 | 0.543 | **129** | 88 (1.8%) |
+| Random Forest (supervised comparison) | 0.646 | 0.712 | 0.592 | 0.650 | 148 | 60 (1.2%) |
+<!-- generated:test-results:end -->
+
+Caught per type:
+
+<!-- generated:caught-by-type:start -->
+| Type (of 50 each) | Tuned range rule | z-score OR Markov | Path | Cluster | Trend | Deviation | **Hybrid** | Random Forest |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Card testing | 27 | 34 | 32 | 28 | 2 | 3 | **34** | 49 |
+| Repeated failure | 30 | 34 | 31 | 25 | 0 | 2 | **32** | 11 |
+| Fast fulfilment | 15 | 21 | 0 | 12 | 36 | 22 | **29** | 42 |
+| Stalled delivery | 24 | 12 | 0 | 2 | 13 | 14 | **15** | 0 |
+| High-value refund | 0 | 8 | 0 | 23 | 6 | 14 | **19** | 46 |
+<!-- generated:caught-by-type:end -->
+
+### Five seeds (42, 7, 1, 2, 3): mean ± standard deviation, test split
+
+One seed can be lucky, so `benchmark.py` generates five datasets and repeats everything on each.
+"Before" is the earlier model (Markov chain OR k-means, each flagging its own 1%).
+
+<!-- generated:seeds-test:start -->
+| Method | F1 | Precision | Recall | False-alarm rate | ROC-AUC | PR-AUC |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Before: Markov chain OR k-means | 0.533 ± 0.039 | 0.597 ± 0.043 | 0.487 ± 0.063 | 0.0167 ± 0.0037 | – | – |
+| Baseline: tuned range rule | 0.444 ± 0.038 | 0.528 ± 0.048 | 0.386 ± 0.044 | 0.0175 ± 0.0035 | 0.898 ± 0.012 | 0.421 ± 0.045 |
+| Baseline: z-score sum OR Markov chain | 0.526 ± 0.041 | 0.585 ± 0.041 | 0.481 ± 0.059 | 0.0172 ± 0.0033 | – | – |
+| **After: hybrid (four checks, one threshold)** | **0.603 ± 0.035** | 0.626 ± 0.027 | 0.586 ± 0.062 | 0.0176 ± 0.0026 | 0.940 ± 0.008 | 0.626 ± 0.052 |
+<!-- generated:seeds-test:end -->
+
+F1 on each seed:
+
+<!-- generated:seeds-test-f1:start -->
+| Method | seed 42 | seed 7 | seed 1 | seed 2 | seed 3 |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Always "normal" (trivial baseline) | 0.000 | – | 0.000 | 0 | 0 |
-| Range rule, no ML (outside training min–max) | 0.335 | 0.633 | 0.228 | 57 | 33 |
-| Markov chain alone | 0.353 | 0.589 | 0.252 | 63 | 44 |
-| Isolation Forest alone | 0.271 | 0.517 | 0.184 | 46 | 43 |
-| k-means alone | 0.466 | 0.662 | 0.360 | 90 | 46 |
-| LOF alone | 0.338 | 0.596 | 0.236 | 59 | 40 |
-| **Markov + k-means (the app)** | **0.470** | 0.554 | **0.408** | **102** | 82 |
-| Random Forest (supervised comparison) | 0.646 | 0.712 | 0.592 | 148 | 60 |
+| Before: Markov chain OR k-means | 0.470 | 0.563 | 0.515 | 0.537 | 0.581 |
+| Baseline: tuned range rule | 0.426 | 0.454 | 0.383 | 0.462 | 0.498 |
+| Baseline: z-score sum OR Markov chain | 0.485 | 0.569 | 0.483 | 0.512 | 0.580 |
+| **After: hybrid (four checks, one threshold)** | 0.552 | 0.613 | 0.581 | 0.612 | 0.657 |
+<!-- generated:seeds-test-f1:end -->
 
-Caught per type (of 50 each):
+Mean number caught per type:
 
-| Type | Range rule | Markov | k-means | **App** | Random Forest |
+<!-- generated:seeds-test-by-type:start -->
+| Method (mean caught of 50) | Card testing | Repeated failure | Fast fulfilment | Stalled delivery | High-value refund |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Card testing | 19 | 32 | 28 | **34** | 49 |
-| Repeated failure | 10 | 31 | 25 | **31** | 11 |
-| Fast fulfilment | 1 | 0 | 12 | **12** | 42 |
-| Stalled delivery | 13 | 0 | 2 | **2** | 0 |
-| High-value refund | 14 | 0 | 23 | **23** | 46 |
+| Before: Markov chain OR k-means | 39.4 | 34.2 | 16.8 | 3.2 | 28.2 |
+| Baseline: tuned range rule | 31.0 | 28.2 | 12.4 | 24.8 | 0.2 |
+| Baseline: z-score sum OR Markov chain | 37.8 | 35.6 | 22.2 | 14.6 | 10.0 |
+| **After: hybrid (four checks, one threshold)** | 37.4 | 32.2 | 37.2 | 15.6 | 24.0 |
+<!-- generated:seeds-test-by-type:end -->
+
+### What each check contributes (hybrid with one check removed)
+
+<!-- generated:ablations:start -->
+| Variant | Validation F1 | Validation PR-AUC | Test F1 | Test PR-AUC |
+| :--- | ---: | ---: | ---: | ---: |
+| **After: hybrid (four checks, one threshold)** | 0.642 ± 0.043 | 0.665 ± 0.037 | 0.603 ± 0.035 | 0.626 ± 0.052 |
+| Hybrid without the path check | 0.623 ± 0.010 | 0.644 ± 0.032 | 0.580 ± 0.047 | 0.609 ± 0.062 |
+| Hybrid without the cluster check | 0.623 ± 0.038 | 0.653 ± 0.040 | 0.594 ± 0.041 | 0.625 ± 0.050 |
+| Hybrid without the trend check | 0.591 ± 0.053 | 0.637 ± 0.038 | 0.556 ± 0.036 | 0.593 ± 0.050 |
+| Hybrid without the deviation check | 0.632 ± 0.039 | 0.650 ± 0.034 | 0.599 ± 0.020 | 0.622 ± 0.043 |
+<!-- generated:ablations:end -->
+
+<!-- generated:ablations-by-type:start -->
+| Method (mean caught of 50) | Card testing | Repeated failure | Fast fulfilment | Stalled delivery | High-value refund |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| **After: hybrid (four checks, one threshold)** | 37.4 | 32.2 | 37.2 | 15.6 | 24.0 |
+| Hybrid without the path check | 33.4 | 25.0 | 39.0 | 16.2 | 24.4 |
+| Hybrid without the cluster check | 36.2 | 33.2 | 39.6 | 17.0 | 14.4 |
+| Hybrid without the trend check | 37.6 | 33.0 | 21.2 | 14.4 | 25.0 |
+| Hybrid without the deviation check | 38.4 | 33.2 | 40.4 | 8.2 | 26.2 |
+<!-- generated:ablations-by-type:end -->
+
+### Measured and not used
+
+<!-- generated:not-adopted:start -->
+| Variant | Validation F1 | Validation PR-AUC | Test F1 | Test PR-AUC |
+| :--- | ---: | ---: | ---: | ---: |
+| **After: hybrid (four checks, one threshold)** | 0.642 ± 0.043 | 0.665 ± 0.037 | 0.603 ± 0.035 | 0.626 ± 0.052 |
+| Two refund inputs for the cluster check | 0.627 ± 0.067 | 0.618 ± 0.068 | 0.599 ± 0.027 | 0.595 ± 0.019 |
+| Retry-aware Markov chain as the path check | 0.623 ± 0.037 | 0.651 ± 0.035 | 0.585 ± 0.051 | 0.614 ± 0.057 |
+| Ensemble of the three detectors as the cluster check | 0.640 ± 0.039 | 0.682 ± 0.039 | 0.608 ± 0.027 | 0.638 ± 0.046 |
+| Stacking (logistic regression; validation = held-out half) | 0.616 ± 0.042 | 0.692 ± 0.043 | 0.609 ± 0.032 | 0.646 ± 0.042 |
+<!-- generated:not-adopted:end -->
+
+None of these beat the hybrid on the validation split, which is where such choices are made, so none
+is in the app. `IMPROVEMENTS.md` has the detail, including what stacking catches of a type it was
+never shown.
 
 How to read this:
 
-1. **The ML beats the no-ML baseline**: F1 0.470 vs 0.335; 102 anomalies caught vs 57.
-2. **The two models complement each other**: the Markov chain catches the sequence anomalies (card
-   testing, repeated failures) and nothing else; k-means adds the timing and amount anomalies.
+1. **The hybrid beats both fair baselines on every one of the five seeds**, at about the same
+   false-alarm rate. The margin over the z-score baseline is modest: a small but consistent improvement.
+2. **Each check has its own job.** The path check catches the event-order anomalies (card testing,
+   repeated failures); the trend check catches fast fulfilment; the deviation check catches stalled
+   delivery; the cluster check catches high-value refunds. Removing any one lowers the validation F1.
 3. **The Random Forest scores higher only because it was given labels** for three types (card testing,
-   fast fulfilment, high-value refund). On the two types it never saw, it caught 11 and **0**.
-   Real systems rarely have labels for every new kind of anomaly, so the app uses unsupervised models.
-4. **Honest weakness:** stalled delivery is caught poorly (2/50); the range rule does better there
-   (13/50), because it is a single extreme value and the multi-feature model weighs it less.
+   fast fulfilment, high-value refund). On the two types it never saw, it caught far fewer, and
+   **0** stalled deliveries. Real systems rarely have labels for every new kind of anomaly, so the app
+   uses models that learn from normal orders only.
+4. **Honest weaknesses:** most stalled deliveries and about half of the high-value refunds are still
+   missed. Compared with the earlier model, a few card-testing, repeated-failure and refund catches
+   were given up, because four checks now share the false-alarm budget that two used to. The
+   contribution of the k-means check on its own is small; most of the gain comes from the trend check.
 5. All 500 rule violations are rejected by the automaton. That is by definition, not a detection
    rate: it checks the generated data.
 
@@ -304,9 +462,12 @@ The dashboard's **Models & results** page reads these numbers from `results.json
 - **Errors**: every step raises its own named error with one message format, e.g.
   `[MODEL] expected a saved Markov model, got no file; input=...markov_chain.json`. The API returns it
   with the right HTTP status and the dashboard shows it. Nothing fails silently.
-- **Tests**: `run_tests.py` runs 193 backend + 24 frontend tests, with no mocks of the code under test.
-  They include an end-to-end test from an empty folder (generate → train → evaluate → API) and a test
-  that the app's verdicts reproduce the reported numbers exactly.
+- **Tests**: `run_tests.py` runs the backend and frontend tests, with no mocks of the code under test.
+  They include an end-to-end test from an empty folder (generate → train → evaluate → API), a test
+  that the app's verdicts reproduce the reported numbers exactly, tests that fail if a model gets
+  worse (every detector must rank anomalies with ROC-AUC above 0.8; the hybrid must beat every
+  baseline), a test that the saved models do not change when the test split changes, and a test that
+  the result tables in the documents match the JSON reports.
 
 ---
 
@@ -347,17 +508,27 @@ is a sequence model, one of PS9's listed techniques.
 **Why unsupervised models?** In practice labelled anomalies are rare and new kinds keep appearing.
 The Random Forest result shows the cost of relying on labels: 0/50 on a type it never saw.
 
-**How were thresholds chosen?** From normal *validation* orders, never the test set: the Markov chain
-flags paths rarer than 99% of normal paths; the timing model flags orders more unusual than 99% of
-normal orders. So each flags about 1% of normal orders by design.
+**How were thresholds chosen?** From normal *validation* orders, never the test set. Each check is
+put on one scale (level 0 = typical normal order, level 1 = the point 1% of normal validation orders
+exceed). One threshold on the highest level is then set so that 1.5% of normal validation orders are
+flagged in total.
+
+**Why one threshold instead of an OR of separate ones?** With four checks, separate 1% thresholds
+would add up to as much as 4% false alarms. One threshold keeps the total fixed, and gives the hybrid
+a single score, so ROC-AUC and PR-AUC can be measured for it.
+
+**Is your baseline fair?** Two baselines are tuned the same way as the model: a range rule whose band
+width is set on validation data to the same false-alarm share, and a z-score sum combined with the
+Markov chain. The hybrid beats both on all five seeds, by a modest margin.
 
 **How do you know there is no data leakage?** Splits are assigned in the generator before any
 training. Models fit on train only; thresholds and model choice use validation only; the test split
 is scored once. Labels are never model inputs.
 
-**Why is F1 only 0.47?** The anomalies are deliberately close to normal behaviour; an earlier version
-with obvious anomalies scored about 0.98, but a simple rule did just as well, which proved nothing.
-0.47 against 0.335 for the no-ML rule is an honest, meaningful improvement.
+**Why is F1 only about 0.6?** The anomalies are deliberately close to normal behaviour, and only about
+1.5% of normal orders may be flagged. An earlier version with obvious anomalies scored about 0.98,
+but a simple rule did just as well, which proved nothing. With more false alarms allowed, more
+anomalies would be caught; the small false-alarm budget is what makes it hard.
 
 **Why synthetic data?** PS9 allows "generate or collect". Real logs have no anomaly labels to evaluate
 against, and do not match this workflow's states. The generator's rules are written down, seeded and
@@ -366,5 +537,11 @@ tested, so results are reproducible.
 **Why k-means and not Isolation Forest?** All three were tried; k-means had the best validation F1
 (0.537 vs 0.400 vs 0.389), and that rule was fixed before looking at test results.
 
-**What would you improve?** Real data with injected anomalies; a second-order Markov chain (to tell a
-first payment from a retry); a dedicated detector for single extreme values such as stalled delivery.
+**Does k-means use combinations of features?** Not in a way that was measurable: an earlier check
+trained it on inputs whose columns were shuffled independently and it ranked anomalies about as well.
+So the description is "far from typical normal orders", not "unusual together".
+
+**What would you improve?** Real data with injected anomalies; a one-sided check for slow steps
+(stalled delivery is still mostly missed); a check that looks at the amount and the refund delay of
+refunded orders only. A retry-aware Markov chain, an ensemble of the three detectors and a stacked
+model were measured and did not beat the current model on validation data.
