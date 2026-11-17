@@ -12,7 +12,7 @@
 This document defines the formal workflow model for an online shopping order management lifecycle. The project employs a dual-engine anomaly detection architecture:
 
 1. **Finite State Machine (FSM):** Provides **deterministic** verification of process structure and transition rules. It answers: *"Does this sequence obey the formal grammar and operational logic of an order lifecycle?"*
-2. **Machine Learning (two models):** Provides **statistical** anomaly detection on structurally legal orders. The Markov chain path model answers *"Is this order of events rare under normal behaviour?"*; the timing-and-amount model (k-means clustering, chosen on the validation split from Isolation Forest, k-means and Local Outlier Factor) answers *"Are the times, the amount and the outcome unusual together?"* (see the root `README.md`).
+2. **Machine Learning (two models):** Provides **statistical** anomaly detection on structurally legal orders. The Markov chain path model answers *"Is this order of events rare under normal behaviour?"*; the timing-and-amount model runs three checks: a cluster check (k-means clustering, chosen on the validation split from Isolation Forest, k-means and Local Outlier Factor) answers *"Are the times, the amount and the outcome far from typical normal orders?"*, a trend check answers *"Were the steps consistently fast or slow?"* and a deviation check answers *"Is any value far outside its normal range?"*. All checks share one threshold (see the root `README.md`).
 
 ```text
                ┌────────────────────────────────────────────────────────┐

@@ -50,8 +50,8 @@ Resulting shares: 90% of orders never fail payment, 7.4% fail once, 1.9% twice; 
 
 ## Anomalies (legal and complete, but suspicious)
 
-Each type overlaps normal orders on every single measurement; only the combination or the sequence is
-unusual.
+Each type overlaps normal orders on every single measurement, so none can be caught completely
+without also flagging normal orders.
 
 | Type | Rule |
 | :--- | :--- |
@@ -64,7 +64,9 @@ unusual.
 **No giveaway feature.** `backend/ml/dataset/audit.py` finds, for each type, the single measurement that
 catches the most of it while flagging at most 1% of normal orders. A generator test fails if any type
 reaches 90%. Current values: card testing 79% (failed payments), repeated failures 81% (failed
-payments), fast fulfilment 37%, stalled delivery 74%, high-value refund 57%.
+payments), fast fulfilment 37%, stalled delivery 74%, high-value refund 57%. These are per-type limits
+with the whole 1% spent on one measurement; a detector that watches every measurement at once has to
+share its false-alarm budget between them, and catches less of each type.
 
 ## Rule violations
 

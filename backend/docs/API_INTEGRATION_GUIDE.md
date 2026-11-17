@@ -78,16 +78,22 @@ A legal, complete order with timing data (the request above) also has both model
 ```json
 {
   "verdict": "NORMAL",
-  "summary": "Normal: the order finished in 'DELIVERED'; this event order occurs in 75.8% of orders under normal behaviour, and its timing and amount are within normal behaviour.",
+  "summary": "Normal: the order finished in 'DELIVERED'; this event order occurs in 75.8% of orders under normal behaviour, and its times, amount and outcome are within normal behaviour.",
   "ml_evaluation": {
-    "prediction": "NORMAL", "is_ml_anomaly": false, "anomaly_score": -3.178, "path_log10_probability": -0.120,
+    "prediction": "NORMAL", "is_ml_anomaly": false, "anomaly_score": -3.701, "path_log10_probability": -0.120,
     "transitions": [
       {"step": 1, "from_state": "ORDER_CREATED", "event": "CONFIRM_PAYMENT", "to_state": "PAID", "probability": 0.826, "is_unusual": false},
       "..."
     ]
   },
   "timing_evaluation": {
-    "prediction": "NORMAL", "is_timing_anomaly": false, "anomaly_score": -2.515, "model_name": "kmeans",
+    "prediction": "NORMAL", "is_timing_anomaly": false, "anomaly_score": -1.032, "model_name": "kmeans",
+    "checks": [
+      {"name": "cluster", "score": -1.032, "is_flagged": false},
+      {"name": "trend", "score": -1.480, "is_flagged": false},
+      {"name": "deviation", "score": -1.349, "is_flagged": false}
+    ],
+    "trend_z": -0.038,
     "inputs": {"amount_z": 0.055, "slowest_step_z": 0.015, "fastest_step_z": -0.044, "mean_step_z": -0.022,
                "payment_failures": 0.0, "refunded": 0.0, "cancelled": 0.0},
     "measurements": [
@@ -103,7 +109,12 @@ Field rules (checked by the schema before anything is stored or returned):
 
 - `verdict`: `RULE_VIOLATION` (FSM rejected), `VALID_INCOMPLETE` (legal, unfinished), `STATISTICAL_ANOMALY`
   (legal, complete, flagged by either model), `NORMAL`.
-- `anomaly_score` > 0 means that check flagged the order, for both models.
+- `anomaly_score` > 0 means that check flagged the order, for both models. Both models share one
+  threshold, set so that all checks together flag 1.5% of normal validation orders.
+- `timing_evaluation.checks`: always `cluster`, `trend`, `deviation`, in that order. `score` is the
+  check's level minus the threshold (level 0 = a typical normal order, level 1 = the point 1% of normal
+  validation orders exceed); `is_flagged` is `score > 0`. `timing_evaluation.anomaly_score` is the
+  highest of the three scores. `trend_z` is negative when the steps were faster than normal overall.
 - `ml_evaluation` and `ml_skip_reason`: exactly one is non-null; the same for `timing_*`.
 - `is_unusual` on a transition: that kind of step's probability, multiplied over all its occurrences in
   the order, is below 10%. On a measurement: its percentile among normal orders is outside 2.5-97.5.

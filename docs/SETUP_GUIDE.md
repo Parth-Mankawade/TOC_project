@@ -18,17 +18,14 @@ Git is only needed if you clone the project; copying the folder works too.
 ## 2. Get the project folder
 
 ```powershell
-git clone https://github.com/Supra-06/TOC.git
+git clone https://github.com/Parth-Mankawade/TOC_project.git TOC
 cd TOC
 ```
 
-or copy the `TOC` folder onto the computer and open PowerShell inside it.
+or copy the `TOC` folder onto the computer and open PowerShell inside it (you can skip `.venv`,
+`frontend/node_modules` and `frontend/dist`, which steps 3 and 4 recreate).
 
-> **Important:** the rebuilt version currently exists only on the computer where it was made. It has
-> not been committed or pushed, so cloning from GitHub gives the **old** version until someone commits
-> and pushes these changes. Until then, copy the folder (you can skip `.venv`, `frontend/node_modules`
-> and `frontend/dist`, which steps 3 and 4 recreate). **Every command below
-is run from this `TOC` folder** unless it says `cd frontend`.
+**Every command below is run from this `TOC` folder** unless it says `cd frontend`.
 
 ## 3. Set up Python (once)
 
@@ -44,7 +41,7 @@ python3.13 -m venv .venv
 .venv/bin/python -m pip install -r backend/requirements.txt
 ```
 
-This creates a private Python environment in `.venv` and installs FastAPI, scikit-learn 1.9.1,
+This creates a private Python environment in `.venv` and installs FastAPI, scikit-learn 1.9.1, SciPy,
 SQLAlchemy, pytest and the rest. (macOS/Linux: in every later command, write `.venv/bin/python`
 instead of `.\.venv\Scripts\python.exe`.)
 
@@ -73,7 +70,8 @@ This one command:
 1. generates the synthetic event log (12,350 orders) → `backend/ml/dataset/data/orders_event_log.csv`
 2. trains the Markov chain → `backend/ml/models/markov_chain.json`
 3. trains three timing-model candidates, picks the best on validation data → `backend/ml/models/timing_model.joblib` (+ `.json`)
-4. evaluates every model on the test data → `backend/ml/evaluation/results.json`
+4. sets one threshold for all four checks on validation data (stored in both model files)
+5. evaluates every model on the test data → `backend/ml/evaluation/results.json`
 
 It ends by printing the results table. The same seed always gives the same data and results, so
 the numbers match the documentation on every computer.
@@ -98,8 +96,8 @@ clustering loaded**. The database starts empty: press **Start stream** on the Ov
 .\.venv\Scripts\python.exe run_tests.py
 ```
 
-Expected end of the output: `193 passed` for the backend, `24 passed` for the frontend, and
-**All test steps passed.** (about one minute).
+Expected end of the output: a line ending in `passed` for the backend and for the frontend (no
+`failed`), and **All test steps passed.** (about one and a half minutes).
 
 ---
 
@@ -136,6 +134,8 @@ Every error in this project says which step failed and what to do. Common ones:
 | Sidebar: **Backend unreachable** | The server is not running | Start it (step 6) |
 | `[MODEL] expected a saved Markov model (run: python -m backend.ml.pipeline), got no file` | Models not trained yet | Run step 5 |
 | `[MODEL] expected scikit-learn 1.9.1 ..., got <other version>` | Wrong scikit-learn installed | Re-run step 3, or re-run step 5 to retrain with the installed version |
+| `[MODEL] expected scales for the checks ...` or `[MODEL] expected fields ...` | Model files saved by an older version of the code | Run step 5 |
+| History or Overview shows a `[STORAGE]` or validation error after updating the code | The database holds analyses stored by an older version (their timing results lack the three checks) | Stop the server, delete `backend\toc_workflow.db`, start again |
 | `[LOAD] expected an existing CSV file ...` (Overview stream / Analyze examples) | Dataset not generated | Run step 5 |
 | `[STORAGE] expected every column of 'workflow_analyses' (an older database file? ...)` | A database file from an older version | Stop the server, delete `backend\toc_workflow.db`, start again (it is recreated empty) |
 | Opening http://127.0.0.1:8000/ gives a JSON `NOT_FOUND` error | The dashboard was not built | Run step 4 |
