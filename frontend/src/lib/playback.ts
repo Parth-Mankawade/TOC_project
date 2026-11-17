@@ -2,7 +2,7 @@
 // one analysis in the order the backend runs them. Every text comes from the record itself.
 import type { AnalysisRecord } from "../types";
 import { describeProbability, formatAmount } from "./format";
-import { DETECTOR_LABELS, VERDICTS, type WalkStep } from "./workflow";
+import { CHECK_LABELS, DETECTOR_LABELS, VERDICTS, labelOf, type WalkStep } from "./workflow";
 
 export interface Frame {
   index: number; // 0 = before the first event
@@ -72,7 +72,10 @@ export function analysisStages(record: AnalysisRecord): Stage[] {
     ? { key: "timing", title: "Timing & amount", status: "skipped", detail: required(record.timing_skip_reason, "a timing skip reason") }
     : {
       key: "timing", title: "Timing & amount", status: timing.is_timing_anomaly ? "flagged" : "clear",
-      detail: `${DETECTOR_LABELS[timing.model_name]} · score ${timing.anomaly_score.toFixed(2)}`,
+      detail: `${DETECTOR_LABELS[timing.model_name]} · score ${timing.anomaly_score.toFixed(2)} · `
+        + (timing.checks.some((c) => c.is_flagged)
+          ? `flagged by: ${timing.checks.filter((c) => c.is_flagged).map((c) => labelOf(CHECK_LABELS, c.name).toLowerCase()).join(", ")}`
+          : "no check flagged"),
     };
 
   const verdictStatus: Record<AnalysisRecord["verdict"], StageStatus> = {

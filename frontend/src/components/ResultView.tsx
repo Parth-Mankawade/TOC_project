@@ -1,7 +1,8 @@
+import { Fragment } from "react";
 import type { AnalysisRecord, FsmDefinition, Measurement } from "../types";
 import { describePercentile, describeProbability, formatAmount, formatDateTime, formatDuration, formatMeasurementValue } from "../lib/format";
 import { useFsmState } from "../lib/hooks";
-import { DETECTOR_LABELS, eventsOf, possibleOutcomes, walkPath } from "../lib/workflow";
+import { CHECK_LABELS, CHECK_QUESTIONS, DETECTOR_LABELS, eventsOf, labelOf, possibleOutcomes, walkPath } from "../lib/workflow";
 import { AnalysisFlow } from "./AnalysisFlow";
 import { Icon } from "./Icon";
 import { PathPlayer, type StepFacts } from "./PathPlayer";
@@ -259,14 +260,28 @@ function TimingCheck({ record }: { record: AnalysisRecord }) {
         <span className={`check-icon ${timing === null ? "tone-info" : timing.is_timing_anomaly ? "tone-warn" : "tone-ok"}`}><Icon name="clock" /></span>
         <div>
           <h3 className="card-title">Timing & amount{timing !== null && ` · ${DETECTOR_LABELS[timing.model_name]}`}</h3>
-          <p className="card-sub">Are the times, the amount and the outcome unusual together?</p>
+          <p className="card-sub">Three checks on the times, the amount and the outcome. A score above 0 flags the order.</p>
         </div>
       </div>
       {timing !== null ? (
         <>
           <p className="muted" style={{ margin: "0 0 12px" }}>
-            {timing.is_timing_anomaly ? "Flagged" : "Within normal behaviour"} · score {timing.anomaly_score.toFixed(2)}
+            {timing.is_timing_anomaly ? "Flagged" : "Within normal behaviour"} · highest score {timing.anomaly_score.toFixed(2)}
           </p>
+          <dl className="kv" style={{ margin: "0 0 14px" }}>
+            {timing.checks.map((c) => (
+              <Fragment key={c.name}>
+                <dt title={labelOf(CHECK_QUESTIONS, c.name)}>{labelOf(CHECK_LABELS, c.name)}</dt>
+                <dd>
+                  <span style={c.is_flagged ? { color: "var(--warn)", fontWeight: 600 } : undefined}>{c.score.toFixed(2)}</span>{" "}
+                  <span className="faint">
+                    {labelOf(CHECK_QUESTIONS, c.name)}
+                    {c.name === "trend" && ` Overall ${timing.trend_z < 0 ? "faster" : "slower"} (z ${timing.trend_z.toFixed(2)}).`}
+                  </span>
+                </dd>
+              </Fragment>
+            ))}
+          </dl>
           <ul className="list-plain">
             {timing.measurements.filter((m) => m.step === null).map((m) => (
               <li key={m.name}>

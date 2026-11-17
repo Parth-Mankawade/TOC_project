@@ -4,7 +4,7 @@ import { Icon } from "../components/Icon";
 import { Bar, ErrorBox, Loading, PageHeader } from "../components/ui";
 import { describeProbability, formatAmount, formatDuration, formatNumber, formatPercent } from "../lib/format";
 import { useAsync, useFsmState } from "../lib/hooks";
-import { ANOMALY_TYPE_LABELS, DETECTOR_LABELS, MODEL_LABELS, MODEL_ROLES, VIOLATION_TYPE_LABELS, labelOf } from "../lib/workflow";
+import { ANOMALY_TYPE_LABELS, CHECK_LABELS, CHECK_QUESTIONS, DETECTOR_LABELS, MODEL_LABELS, MODEL_ROLES, VIOLATION_TYPE_LABELS, labelOf } from "../lib/workflow";
 import type { DetectorName, EvaluatedModel, EvaluationReport } from "../types";
 
 const STRONG = 0.5; // a model "catches most" of a type at or above this share
@@ -38,11 +38,12 @@ function observations(report: EvaluationReport): string[] {
     list.map((t) => `${labelOf(ANOMALY_TYPE_LABELS, t)} (${m.caught_by_type[t].caught}/${m.caught_by_type[t].total})`).join(", ");
   const out: string[] = [];
   const hybrid = byName(report, "hybrid");
-  const rule = byName(report, "range_rule");
-  out.push(`The app's model (Markov chain + ${DETECTOR_LABELS[report.model_selection.chosen]}) reaches F1 ${hybrid.f1.toFixed(3)}, `
-    + `against ${rule.f1.toFixed(3)} for the no-ML range rule: ${hybrid.anomalies_caught} anomalies caught instead of `
-    + `${rule.anomalies_caught}, with ${hybrid.false_alarms} false alarms instead of ${rule.false_alarms}.`);
-  for (const name of ["markov_chain", `timing_${report.model_selection.chosen}`]) {
+  for (const name of ["zscore_or_markov", "tuned_range_rule"]) {
+    const base = byName(report, name);
+    out.push(`The app's hybrid reaches F1 ${hybrid.f1.toFixed(3)}, against ${base.f1.toFixed(3)} for ${labelOf(MODEL_LABELS, name)}: `
+      + `${hybrid.anomalies_caught} anomalies caught against ${base.anomalies_caught}, with ${hybrid.false_alarms} false alarms against ${base.false_alarms}.`);
+  }
+  for (const name of ["markov_chain", `timing_${report.model_selection.chosen}`, "trend_check", "deviation_check"]) {
     const m = byName(report, name);
     const strong = types.filter((t) => share(m, t) >= STRONG);
     const weak = types.filter((t) => share(m, t) < WEAK);
@@ -92,8 +93,9 @@ export function Models() {
         </div>
         <div className="headline-grid">
           {[
-            { label: "Markov + " + DETECTOR_LABELS[selection.chosen], value: report.headline.hybrid, note: "what the app uses", tone: "accent" },
-            { label: "Range rule, no ML", value: report.headline.range_rule, note: "flag anything outside the normal min–max", tone: "info" },
+            { label: "Hybrid: Markov + " + DETECTOR_LABELS[selection.chosen] + " + trend + deviation", value: report.headline.hybrid, note: "what the app uses", tone: "accent" },
+            { label: "z-score sum OR Markov chain", value: report.headline.zscore_or_markov, note: "baseline without a fitted detector", tone: "info" },
+            { label: "Range rule, tuned (no ML)", value: report.headline.tuned_range_rule, note: "same false-alarm budget as the hybrid", tone: "info" },
             { label: "Always “normal”", value: report.headline.always_normal, note: "trivial baseline", tone: "info" },
           ].map((h) => (
             <div key={h.label} className={`stat tone-${h.tone}`}>
@@ -123,6 +125,7 @@ export function Models() {
                 <th className="num">Recall</th>
                 <th className="num">F1</th>
                 <th className="num">ROC-AUC</th>
+                <th className="num" title="Average precision. More telling than ROC-AUC when anomalies are rare.">PR-AUC</th>
               </tr>
             </thead>
             <tbody>
@@ -141,6 +144,7 @@ export function Models() {
                   <td className="num">{m.recall.toFixed(3)}</td>
                   <td className="num" style={{ fontWeight: 600 }}>{m.f1.toFixed(3)}</td>
                   <td className="num">{m.roc_auc === null ? <span className="faint" title="This model gives no score to rank by">—</span> : m.roc_auc.toFixed(3)}</td>
+                  <td className="num">{m.pr_auc === null ? <span className="faint" title="This model gives no score to rank by">—</span> : m.pr_auc.toFixed(3)}</td>
                 </tr>
               ))}
             </tbody>
@@ -155,7 +159,7 @@ export function Models() {
 
       <div className="grid g-2" style={{ marginTop: 16, alignItems: "start" }}>
         <section className="card">
-          <h3 className="card-title">Choosing the timing model (validation split)</h3>
+          <h3 className="card-title">Choosing the cluster-check detector (validation split)</h3>
           <p className="card-sub" style={{ marginBottom: 8 }}>
             {selection.normal_orders} normal and {selection.anomalous_orders} anomalous validation orders. Each candidate flags the
             most unusual {formatPercent(1 - selection.threshold_percentile / 100, 0)} of normal validation orders. Rule: {selection.rule}.
@@ -230,8 +234,9 @@ export function Models() {
             <p className="card-sub">
               P(event | state), counted in {formatNumber(markov.training_sample_count)} normal training orders (+{markov.smoothing_alpha} per
               transition so unseen ones are not impossible). Thicker arrows are more likely. An order is flagged when its whole path is
-              rarer than the rarest {markov.threshold_percentile}% of {formatNumber(markov.validation_sample_count)} normal validation
-              orders: {describeProbability(markov.threshold_log10_probability)}.
+              rarer than {describeProbability(markov.threshold_log10_probability)}; {formatPercent(markov.validation_flag_rate, 2)} of
+              {" "}{formatNumber(markov.validation_sample_count)} normal validation orders are. This threshold is shared with the
+              timing checks below.
             </p>
           </div>
         </div>
@@ -294,8 +299,10 @@ export function Models() {
             {[
               `Each order becomes ${timing.model_inputs.length} numbers: ${timing.model_inputs.join(", ")}. A z-score is how many standard deviations a value is from normal (on a log scale).`,
               `${DETECTOR_LABELS[timing.model_name]} (${Object.entries(timing.detector_params).filter(([, v]) => typeof v !== "object").map(([k, v]) => `${k} = ${v}`).join(", ")}) learns where normal orders lie in that space.`,
-              `An order is flagged when it is more unusual than ${timing.threshold_percentile}% of ${formatNumber(timing.validation_sample_count)} normal validation orders.`,
-              `On the test split the combined model flagged ${formatPercent(hybrid.false_alarm_rate)} of normal orders and caught ${hybrid.anomalies_caught} of ${hybrid.anomalous_orders} anomalies.`,
+              `That is the cluster check. Two more checks use the z-scores directly: ${["trend", "deviation"].map((c) => `${labelOf(CHECK_LABELS, c).toLowerCase()} (${labelOf(CHECK_QUESTIONS, c)})`).join(" and ")}.`,
+              `Each check's score is put on one scale: level 0 is a typical normal order and level 1 is the point ${formatPercent(1 - timing.scale_percentile / 100, 0)} of ${formatNumber(timing.validation_sample_count)} normal validation orders exceed.`,
+              `These three checks and the Markov chain's path check share one threshold, level ${timing.threshold.toFixed(3)}, chosen so that all four together flag ${formatPercent(report.hybrid.validation_flag_rate)} of normal validation orders (${Object.entries(report.hybrid.validation_flag_rate_by_check).map(([c, r]) => `${labelOf(CHECK_LABELS, c).toLowerCase()} ${formatPercent(r, 2)}`).join(", ")}; an order can be flagged by more than one).`,
+              `On the test split the hybrid flagged ${formatPercent(hybrid.false_alarm_rate)} of normal orders and caught ${hybrid.anomalies_caught} of ${hybrid.anomalous_orders} anomalies.`,
             ].map((text, i) => (
               <li key={i} style={{ display: "flex", gap: 12 }}>
                 <span className="step-num">{i + 1}</span>

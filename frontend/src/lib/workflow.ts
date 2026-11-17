@@ -37,24 +37,46 @@ export const DETECTOR_LABELS: Record<DetectorName, string> = {
   local_outlier_factor: "Local Outlier Factor",
 };
 
+export const CHECK_LABELS: Record<string, string> = {
+  path: "Event order",
+  cluster: "Cluster",
+  trend: "Trend",
+  deviation: "Deviation",
+};
+
+export const CHECK_QUESTIONS: Record<string, string> = {
+  path: "Is this order of events rare in normal orders?",
+  cluster: "Are the times, amount and outcome far from typical normal orders?",
+  trend: "Were the steps consistently faster, or consistently slower, than normal?",
+  deviation: "Is any value far outside its normal range?",
+};
+
 export const MODEL_LABELS: Record<string, string> = {
   always_normal: "Always “normal”",
-  range_rule: "Range rule (no ML)",
+  range_rule: "Range rule, untuned (no ML)",
+  tuned_range_rule: "Range rule, tuned (no ML)",
+  zscore_or_markov: "z-score sum OR Markov chain",
   markov_chain: "Markov chain",
   timing_isolation_forest: "Isolation Forest",
   timing_kmeans: "k-means clustering",
   timing_local_outlier_factor: "Local Outlier Factor",
-  hybrid: "Markov + chosen timing model",
+  trend_check: "Trend check",
+  deviation_check: "Deviation check",
+  hybrid: "Hybrid: four checks, one threshold",
   random_forest: "Random Forest",
 };
 
 export const MODEL_ROLES: Record<string, string> = {
   always_normal: "trivial baseline",
   range_rule: "non-ML baseline",
-  markov_chain: "event order",
-  timing_isolation_forest: "timing & amount",
-  timing_kmeans: "timing & amount",
-  timing_local_outlier_factor: "timing & amount",
+  tuned_range_rule: "non-ML baseline, same false-alarm budget",
+  zscore_or_markov: "baseline without a fitted detector",
+  markov_chain: "event order, alone",
+  timing_isolation_forest: "cluster check candidate, alone",
+  timing_kmeans: "cluster check candidate, alone",
+  timing_local_outlier_factor: "cluster check candidate, alone",
+  trend_check: "timing check, alone",
+  deviation_check: "timing check, alone",
   hybrid: "used by the app",
   random_forest: "supervised comparison",
 };

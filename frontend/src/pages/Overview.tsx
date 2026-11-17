@@ -218,8 +218,9 @@ function HowChecked() {
   const { markov_chain: markov, evaluation } = models.data;
   const steps: [IconName, string, string][] = [
     ["shield", "Rules", "Finite state machine: is every step allowed, and has the order finished?"],
-    ["route", "Event order", `Markov chain: is the path rarer than the rarest ${markov.threshold_percentile}% of normal orders (${describeProbability(markov.threshold_log10_probability)})?`],
-    ["clock", "Timing & amount", `${DETECTOR_LABELS[evaluation.model_selection.chosen]} (picked on validation data): are the times, amount and outcome unusual together?`],
+    ["route", "Event order", `Markov chain: is the path rarer than ${describeProbability(markov.threshold_log10_probability)}?`],
+    ["clock", "Timing & amount", `Three checks: ${DETECTOR_LABELS[evaluation.model_selection.chosen]} (picked on validation data) asks whether the times, amount and outcome are far from typical normal orders; a trend check asks whether the steps were consistently fast or slow; a deviation check asks whether any value is far outside its normal range.`],
+    ["layers", "One threshold", `All four checks share one threshold, set so that ${formatPercent(evaluation.hybrid.validation_flag_rate)} of ${formatNumber(evaluation.hybrid.validation_normal_orders)} normal validation orders are flagged.`],
   ];
   return (
     <ol className="list-plain" style={{ marginTop: 14 }}>

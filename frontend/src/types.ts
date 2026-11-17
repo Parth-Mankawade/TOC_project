@@ -53,11 +53,22 @@ export interface Measurement {
 
 export type DetectorName = "isolation_forest" | "kmeans" | "local_outlier_factor";
 
+export type TimingCheckName = "cluster" | "trend" | "deviation";
+
+/** One timing check: score > 0 means this check flags the order. */
+export interface TimingCheck {
+  name: TimingCheckName;
+  score: number;
+  is_flagged: boolean;
+}
+
 export interface TimingEvaluation {
   prediction: "NORMAL" | "ANOMALY";
   is_timing_anomaly: boolean;
-  anomaly_score: number;
+  anomaly_score: number; // the highest check score
   model_name: DetectorName;
+  checks: TimingCheck[];
+  trend_z: number; // negative: the steps were faster than normal overall
   inputs: Record<string, number>;
   measurements: Measurement[];
 }
@@ -168,9 +179,12 @@ export interface MarkovModelInfo {
   smoothing_alpha: number;
   training_sample_count: number;
   validation_sample_count: number;
-  threshold_percentile: number;
+  rare_percentile: number;
+  median_log10_probability: number;
+  rare_log10_probability: number;
   threshold_rule: string;
   threshold_log10_probability: number;
+  validation_flag_rate: number; // share of normal validation orders below the threshold
   transitions: MarkovTransition[];
 }
 
@@ -187,8 +201,9 @@ export interface TimingModelInfo {
   model_name: DetectorName;
   detector_params: Record<string, unknown>;
   model_inputs: string[];
-  threshold: number;
-  threshold_percentile: number;
+  checks: Record<TimingCheckName, { median: number; high: number }>;
+  scale_percentile: number;
+  threshold: number; // level above which a check flags an order (level 1 = the scale percentile)
   normal_band_percentiles: [number, number];
   training_sample_count: number;
   validation_sample_count: number;
@@ -209,6 +224,7 @@ export interface EvaluatedModel {
   anomalies_caught: number;
   anomalous_orders: number;
   roc_auc: number | null;
+  pr_auc: number | null;
   caught_by_type: Record<string, { caught: number; total: number }>;
   trained_on_types?: string[];
   never_seen_types?: string[];
@@ -243,7 +259,18 @@ export interface EvaluationReport {
     candidates: Record<DetectorName, CandidateResult>;
     chosen: DetectorName;
   };
-  headline: { metric: string; model: string; hybrid: number; always_normal: number; range_rule: number };
+  hybrid: {
+    checks: string[];
+    false_alarm_budget: number;
+    threshold_level: number;
+    validation_normal_orders: number;
+    validation_flag_rate: number;
+    validation_flag_rate_by_check: Record<string, number>;
+  };
+  headline: {
+    metric: string; model: string; hybrid: number; always_normal: number; range_rule: number;
+    tuned_range_rule: number; zscore_or_markov: number;
+  };
   test: { models: EvaluatedModel[] };
   rule_violations: {
     orders: number;

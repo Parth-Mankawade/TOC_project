@@ -1638,7 +1638,7 @@ tr.highlight td {
 .stat.dark { background: var(--text); color: #fff; border-color: var(--text); }
 .stat.dark .stat-label, .stat.dark .stat-note { color: #c9c9d1; }
 .headline { display: grid; gap: 14px; }
-.headline-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.headline-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .headline-grid .stat.tone-accent { border-color: var(--accent-line); background: var(--accent-soft); }
 .example-groups { display: grid; gap: 16px; }
 

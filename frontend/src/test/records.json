@@ -30,7 +30,6 @@
     "timing_evaluation": null,
     "timing_skip_reason": "Timing check skipped: the order breaks a workflow rule (RULE_VIOLATION).",
     "diagnostics": {
-      "severity": "CRITICAL",
       "root_cause": "Rule violation at step 2: 'SHIP_ITEMS' is not allowed in state 'PAID'. Allowed: PACK_ITEMS, REFUND_ORDER.",
       "key_factors": [
         "Error type: INVALID_TRANSITION",
@@ -39,7 +38,8 @@
         "State at failure: PAID",
         "Allowed events there: PACK_ITEMS, REFUND_ORDER"
       ],
-      "recommended_action": "Check why 'SHIP_ITEMS' was recorded at step 2; the workflow does not allow it there."
+      "recommended_action": "Check why 'SHIP_ITEMS' was recorded at step 2; the workflow does not allow it there.",
+      "severity": "CRITICAL"
     },
     "id": 1,
     "input_format": "DELIMITED_STRING",
@@ -74,7 +74,6 @@
     "timing_evaluation": null,
     "timing_skip_reason": "Timing check skipped: the order breaks a workflow rule (RULE_VIOLATION).",
     "diagnostics": {
-      "severity": "CRITICAL",
       "root_cause": "Rule violation at step 5: 'REFUND_ORDER' happened after the order had ended in 'DELIVERED'.",
       "key_factors": [
         "Error type: TERMINAL_STATE_VIOLATION",
@@ -83,7 +82,8 @@
         "State at failure: DELIVERED",
         "Allowed events there: none: the order had already ended"
       ],
-      "recommended_action": "Check why 'REFUND_ORDER' was recorded at step 5; the workflow does not allow it there."
+      "recommended_action": "Check why 'REFUND_ORDER' was recorded at step 5; the workflow does not allow it there.",
+      "severity": "CRITICAL"
     },
     "id": 2,
     "input_format": "EVENT_LIST",
@@ -117,7 +117,6 @@
     "timing_evaluation": null,
     "timing_skip_reason": "Timing check skipped: the order has not finished yet (VALID_INCOMPLETE).",
     "diagnostics": {
-      "severity": "INFO",
       "root_cause": "The order is legal so far and is still in progress in state 'PACKED'.",
       "key_factors": [
         "Current state: PACKED",
@@ -125,7 +124,8 @@
         "Possible outcome DELIVERED: next SHIP_ITEMS -> DELIVER_ITEMS",
         "Possible outcome REFUNDED: next REFUND_ORDER"
       ],
-      "recommended_action": "No action: wait for the next event from state 'PACKED'."
+      "recommended_action": "No action: wait for the next event from state 'PACKED'.",
+      "severity": "INFO"
     },
     "id": 3,
     "input_format": "EVENT_LIST",
@@ -140,7 +140,7 @@
     "verdict": "NORMAL",
     "is_anomaly": false,
     "anomaly_type": null,
-    "summary": "Normal: the order finished in 'DELIVERED'; this event order occurs in 75.8% of orders of normal behaviour and its timing and amount are within normal behaviour.",
+    "summary": "Normal: the order finished in 'DELIVERED'; this event order occurs in 75.8% of orders under normal behaviour, and its times, amount and outcome are within normal behaviour.",
     "fsm_evaluation": {
       "is_rule_valid": true,
       "is_complete": true,
@@ -159,7 +159,7 @@
     "ml_evaluation": {
       "prediction": "NORMAL",
       "is_ml_anomaly": false,
-      "anomaly_score": -3.178271956817727,
+      "anomaly_score": -3.700590361178937,
       "path_log10_probability": -0.12048747790708267,
       "transitions": [
         {
@@ -200,8 +200,26 @@
     "timing_evaluation": {
       "prediction": "NORMAL",
       "is_timing_anomaly": false,
-      "anomaly_score": -2.1566758176153153,
+      "anomaly_score": -0.6710283344471751,
       "model_name": "kmeans",
+      "checks": [
+        {
+          "name": "cluster",
+          "score": -0.9085554858445352,
+          "is_flagged": false
+        },
+        {
+          "name": "trend",
+          "score": -0.8710431332402976,
+          "is_flagged": false
+        },
+        {
+          "name": "deviation",
+          "score": -0.6710283344471751,
+          "is_flagged": false
+        }
+      ],
+      "trend_z": 1.2767786911758077,
       "inputs": {
         "amount_z": -1.9090817273047112,
         "slowest_step_z": 1.8879389191269256,
@@ -266,16 +284,19 @@
     },
     "timing_skip_reason": null,
     "diagnostics": {
-      "severity": "INFO",
       "root_cause": "Legal, complete order ending in 'DELIVERED', not flagged by either model.",
       "key_factors": [
         "Final state: DELIVERED",
         "Event order frequency under normal behaviour: 75.8% of orders",
-        "Path check flags orders rarer than about 1 in 1,990 orders (the rarest 1% of normal paths)",
-        "Path anomaly score: -3.18 (above 0 means flagged; +1 = 10x rarer)",
-        "Timing/amount model (kmeans) score: -2.16 (above 0 means flagged)"
+        "Path check flags orders rarer than about 1 in 6,623 orders (0.4% of normal validation orders)",
+        "Path anomaly score: -3.70 (above 0 means flagged; +1 = 10x rarer)",
+        "Cluster check (distance from typical normal orders) score: -0.91 (above 0 means flagged); detector: kmeans",
+        "Trend check (steps consistently fast or slow) score: -0.87 (above 0 means flagged)",
+        "Deviation check (values far outside their normal range) score: -0.67 (above 0 means flagged)",
+        "Overall, the steps ran slower than normal (combined z-score +1.28)"
       ],
-      "recommended_action": "No action needed."
+      "recommended_action": "No action needed.",
+      "severity": "INFO"
     },
     "id": 4,
     "input_format": "EVENT_LIST",
@@ -292,7 +313,7 @@
     "verdict": "STATISTICAL_ANOMALY",
     "is_anomaly": true,
     "anomaly_type": "STATISTICAL_ANOMALY",
-    "summary": "Statistical anomaly: the order is legal and complete, but its event order occurs in only about 1 in 261,582 orders under normal behaviour (flagged below about 1 in 1,990 orders).",
+    "summary": "Statistical anomaly: the order is legal and complete, but its event order occurs in only about 1 in 261,582 orders under normal behaviour (flagged below about 1 in 6,623 orders).",
     "fsm_evaluation": {
       "is_rule_valid": true,
       "is_complete": true,
@@ -306,7 +327,7 @@
     "ml_evaluation": {
       "prediction": "ANOMALY",
       "is_ml_anomaly": true,
-      "anomaly_score": 2.1188479712118182,
+      "anomaly_score": 1.596529566850608,
       "path_log10_probability": -5.417607405936628,
       "transitions": [
         {
@@ -427,16 +448,16 @@
     "timing_evaluation": null,
     "timing_skip_reason": "Timing check skipped: event timestamps and order amount were not provided.",
     "diagnostics": {
-      "severity": "WARNING",
-      "root_cause": "The order follows every rule, but its event order occurs in only about 1 in 261,582 orders under normal behaviour (flagged below about 1 in 1,990 orders).",
+      "root_cause": "The order follows every rule, but its event order occurs in only about 1 in 261,582 orders under normal behaviour (flagged below about 1 in 6,623 orders).",
       "key_factors": [
         "Event order frequency under normal behaviour: about 1 in 261,582 orders",
-        "Path check flags orders rarer than about 1 in 1,990 orders (the rarest 1% of normal paths)",
-        "Path anomaly score: 2.12 (above 0 means flagged; +1 = 10x rarer)",
+        "Path check flags orders rarer than about 1 in 6,623 orders (0.4% of normal validation orders)",
+        "Path anomaly score: 1.60 (above 0 means flagged; +1 = 10x rarer)",
         "Unusual step FAIL_PAYMENT from ORDER_CREATED: 5 time(s) at step(s) 1, 3, 5, 7, 9; probability 0.117 each, 2.2e-05 together",
-        "Timing/amount check: not run (no event timestamps and order amount provided)"
+        "Timing/amount checks: not run (no event timestamps and order amount provided)"
       ],
-      "recommended_action": "Review why the unusual steps happened. Repeated payment failures can mean card testing (someone trying stolen card numbers) or a payment gateway problem."
+      "recommended_action": "Review why the unusual steps happened. Repeated payment failures can mean card testing (someone trying stolen card numbers) or a payment gateway problem.",
+      "severity": "WARNING"
     },
     "id": 5,
     "input_format": "EVENT_LIST",
@@ -463,7 +484,7 @@
     "verdict": "STATISTICAL_ANOMALY",
     "is_anomaly": true,
     "anomaly_type": "STATISTICAL_ANOMALY",
-    "summary": "Statistical anomaly: the order is legal and complete, but its timing, amount and outcome are unusual together.",
+    "summary": "Statistical anomaly: the order is legal and complete, but its times, amount and outcome are far from those of typical normal orders.",
     "fsm_evaluation": {
       "is_rule_valid": true,
       "is_complete": true,
@@ -482,7 +503,7 @@
     "ml_evaluation": {
       "prediction": "NORMAL",
       "is_ml_anomaly": false,
-      "anomaly_score": -0.49320733043590215,
+      "anomaly_score": -1.0155257347971123,
       "path_log10_probability": -2.8055521042889073,
       "transitions": [
         {
@@ -523,8 +544,26 @@
     "timing_evaluation": {
       "prediction": "ANOMALY",
       "is_timing_anomaly": true,
-      "anomaly_score": 0.5150986703289036,
+      "anomaly_score": 0.013407347508176626,
       "model_name": "kmeans",
+      "checks": [
+        {
+          "name": "cluster",
+          "score": 0.013407347508176626,
+          "is_flagged": true
+        },
+        {
+          "name": "trend",
+          "score": -0.34738227231370633,
+          "is_flagged": false
+        },
+        {
+          "name": "deviation",
+          "score": -0.39822144403782755,
+          "is_flagged": false
+        }
+      ],
+      "trend_z": -2.3421702924657923,
       "inputs": {
         "amount_z": -2.012935210104107,
         "slowest_step_z": -0.6616479592171106,
@@ -589,18 +628,21 @@
     },
     "timing_skip_reason": null,
     "diagnostics": {
-      "severity": "WARNING",
-      "root_cause": "The order follows every rule, but its timing, amount and outcome are unusual together.",
+      "root_cause": "The order follows every rule, but its times, amount and outcome are far from those of typical normal orders.",
       "key_factors": [
         "Event order frequency under normal behaviour: about 1 in 639 orders",
-        "Path check flags orders rarer than about 1 in 1,990 orders (the rarest 1% of normal paths)",
-        "Path anomaly score: -0.49 (above 0 means flagged; +1 = 10x rarer)",
-        "Timing/amount model (kmeans) score: 0.52 (above 0 means flagged)",
+        "Path check flags orders rarer than about 1 in 6,623 orders (0.4% of normal validation orders)",
+        "Path anomaly score: -1.02 (above 0 means flagged; +1 = 10x rarer)",
+        "Cluster check (distance from typical normal orders) score: 0.01 (above 0 means flagged); detector: kmeans",
+        "Trend check (steps consistently fast or slow) score: -0.35 (above 0 means flagged)",
+        "Deviation check (values far outside their normal range) score: -0.40 (above 0 means flagged)",
+        "Overall, the steps ran faster than normal (combined z-score -2.34)",
         "Order amount: 239.76, lower than 97.8% of normal orders (normal 250.12 to 5,721.36)",
         "Failed payments: 2, more than 98.4% of normal orders (normal 0 to 1)",
         "FAIL_PAYMENT -> CANCEL_ORDER at step 4: 1.2 min, faster than 98.9% of normal orders (normal 1.7 min to 1.2 h)"
       ],
-      "recommended_action": "Check the values listed as unusual against the order's records."
+      "recommended_action": "Check the listed values against the order's records.",
+      "severity": "WARNING"
     },
     "id": 6,
     "input_format": "EVENT_LIST",

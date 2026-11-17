@@ -56,6 +56,10 @@ describe("analysisStages: the checks in the order the backend runs them", () => 
   it("details quote the backend's own numbers and reasons", () => {
     const timing = analysisStages(RECORDS.timing_anomaly)[4];
     expect(timing.detail).toContain(RECORDS.timing_anomaly.timing_evaluation!.anomaly_score.toFixed(2));
+    // The fixture order is flagged by the cluster check only; a normal order by none.
+    expect(RECORDS.timing_anomaly.timing_evaluation!.checks.filter((c) => c.is_flagged).map((c) => c.name)).toEqual(["cluster"]);
+    expect(timing.detail).toContain("flagged by: cluster");
+    expect(analysisStages(RECORDS.normal_timed)[4].detail).toContain("no check flagged");
     const skipped = analysisStages(RECORDS.path_anomaly)[4];
     expect(skipped.detail).toBe(RECORDS.path_anomaly.timing_skip_reason);
   });
