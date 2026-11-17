@@ -48,14 +48,21 @@ class TestHybrid(unittest.TestCase):
         self.assertGreater(flagged, hybrid.FALSE_ALARM_BUDGET)      # four checks at 1% each: more than the budget
 
     def test_calibrate_meets_the_budget_on_validation_normals(self) -> None:
-        """Never more than the budget (plus one order for rounding). It can be a little less:
-        many orders share the same path, so the threshold can fall on a group of equal levels."""
+        """At most the budget, plus one order for rounding. Fewer only when ties force it: many
+        orders share a path, so many share a path level. If the threshold falls on a group of equal
+        levels, the group is all in or all out, and taking it in would exceed the budget."""
+        n = len(self.val_normal)
         thresholds = []
         for budget in (hybrid.FALSE_ALARM_BUDGET, 0.03):
             markov, timing = hybrid.calibrate(self.markov, self.timing, timed(self.val_normal), budget)
-            flagged = float(np.mean(hybrid.hybrid_scores(markov, timing, timed(self.val_normal)) > 0))
-            self.assertLessEqual(flagged, budget + 1 / len(self.val_normal), budget)
-            self.assertGreaterEqual(flagged, budget - 0.005, budget)
+            levels = np.sort(hybrid.hybrid_levels(markov, timing, timed(self.val_normal)))[::-1]
+            flagged = int(np.sum(levels > timing.threshold))
+            self.assertLessEqual(flagged, budget * n + 1, budget)
+            if flagged < budget * n - 1:
+                next_level = levels[flagged]                       # highest level not flagged
+                group = int(np.sum(np.isclose(levels, next_level, rtol=0, atol=1e-12)))
+                self.assertGreater(flagged + group, budget * n + 1,
+                                   f"budget {budget}: {flagged} flagged; the next {group} equal levels would fit")
             thresholds.append(timing.threshold)
         self.assertGreater(thresholds[0], thresholds[1])     # a smaller budget needs a higher threshold
 

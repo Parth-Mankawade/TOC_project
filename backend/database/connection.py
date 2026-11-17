@@ -6,7 +6,7 @@ temporary database without changing any global state.
 
 from __future__ import annotations
 
-from sqlalchemy import Engine, create_engine, inspect
+from sqlalchemy import Engine, create_engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.core.errors import StorageError
@@ -34,6 +34,27 @@ def check_table(engine: Engine) -> None:
     if missing:
         raise StorageError(f"every column of '{table}' (an older database file? delete it to recreate)",
                            f"missing {missing}", engine.url.render_as_string(hide_password=True))
+    check_rows_current(engine)
+
+
+# Timing results stored before the timing model had three checks lack these keys. They cannot be
+# shown with the current schema, and their scores used another threshold, so they are not converted.
+CURRENT_TIMING_KEYS = ("checks", "trend_z")
+
+
+def check_rows_current(engine: Engine) -> None:
+    """Raise StorageError if any stored timing result comes from an older model version."""
+    with engine.connect() as conn:
+        rows = conn.execute(select(WorkflowAnalysis.id, WorkflowAnalysis.timing_evaluation)
+                            .where(WorkflowAnalysis.timing_evaluation.is_not(None))).all()
+    old = [row.id for row in rows
+           if isinstance(row.timing_evaluation, dict) and not all(k in row.timing_evaluation for k in CURRENT_TIMING_KEYS)]
+    if old:
+        raise StorageError(
+            "analyses stored by the current model version (an older database file: stop the server, delete it "
+            "and start again; it is recreated empty)",
+            f"{len(old)} record(s) with timing results from an older version, e.g. id {old[0]}",
+            engine.url.render_as_string(hide_password=True))
 
 
 def init_db(engine: Engine) -> None:

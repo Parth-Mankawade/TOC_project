@@ -8,6 +8,7 @@ today, with room for small changes; a model that scored like a random guess
 
 from __future__ import annotations
 
+from collections import Counter
 import json
 import math
 from pathlib import Path
@@ -17,6 +18,7 @@ import unittest
 from unittest import mock
 
 import numpy as np
+from scipy.stats import spearmanr
 from sklearn.metrics import roc_auc_score
 
 from backend.ml import hybrid
@@ -24,10 +26,15 @@ from backend.ml import pipeline
 from backend.ml.dataset import generator as gen
 from backend.ml.dataset.loader import load_orders
 from backend.ml.evaluation.evaluate import timed
+from backend.ml.markov.model import path_log10_probability
 from backend.ml.timing.model import DETECTOR_NAMES, detector_scores, fit_candidates
 from backend.tests.fixtures import FIXTURE_SIZES, trained
 
 MIN_AUC = 0.8
+# Markov chain against path frequencies it was not fitted on (paths seen at least MIN_PATH_COUNT times).
+MIN_PATH_COUNT = 3
+MIN_PATH_RANK_CORRELATION = 0.85    # trained chain: 0.95; chains with random probabilities: 0.09 to 0.66
+MAX_PATH_LOG10_ERROR = 0.3          # trained chain: 0.16; chains with random probabilities: 0.48 to 0.97
 
 
 class TestDetectorsBeatRandom(unittest.TestCase):
@@ -60,6 +67,18 @@ class TestDetectorsBeatRandom(unittest.TestCase):
     def test_path_check_on_the_event_order_anomalies(self) -> None:
         # The Markov chain sees only the order of events, so it is judged on the two types that differ there.
         self.assertGreater(self.auc(self.levels["path"], ["CARD_TESTING", "REPEATED_PAYMENT_FAILURE"]), MIN_AUC)
+
+    def test_path_probabilities_match_how_often_each_path_occurs(self) -> None:
+        """The chain predicts how often each order of events happens. Checked on the normal
+        validation orders, which the probabilities were not counted from. The AUC test above
+        cannot see a chain with wrong probabilities: any chain makes long failure loops rare."""
+        counts = Counter(tuple(o.events) for o in self.normal)
+        paths = [p for p, n in counts.items() if n >= MIN_PATH_COUNT]
+        predicted = np.asarray([path_log10_probability(self.t.markov, p) for p in paths])
+        observed = np.asarray([math.log10(counts[p] / len(self.normal)) for p in paths])
+        self.assertGreaterEqual(len(paths), 5)
+        self.assertGreater(spearmanr(predicted, observed)[0], MIN_PATH_RANK_CORRELATION)
+        self.assertLess(float(np.mean(np.abs(predicted - observed))), MAX_PATH_LOG10_ERROR)
 
     def test_trend_check_on_fast_fulfilment(self) -> None:
         self.assertGreater(self.auc(self.levels["trend"], ["FAST_FULFILMENT"]), MIN_AUC)

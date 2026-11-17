@@ -135,7 +135,8 @@ Every error in this project says which step failed and what to do. Common ones:
 | `[MODEL] expected a saved Markov model (run: python -m backend.ml.pipeline), got no file` | Models not trained yet | Run step 5 |
 | `[MODEL] expected scikit-learn 1.9.1 ..., got <other version>` | Wrong scikit-learn installed | Re-run step 3, or re-run step 5 to retrain with the installed version |
 | `[MODEL] expected scales for the checks ...` or `[MODEL] expected fields ...` | Model files saved by an older version of the code | Run step 5 |
-| History or Overview shows a `[STORAGE]` or validation error after updating the code | The database holds analyses stored by an older version (their timing results lack the three checks) | Stop the server, delete `backend\toc_workflow.db`, start again |
+| The server stops at startup with `[STORAGE] expected analyses stored by the current model version ...` | The database holds analyses stored by an older version of the models (for example after switching git branches) | Delete `backend\toc_workflow.db` and start again (it is recreated empty) |
+| The dashboard looks like another version, or shows a validation error, after switching git branches | `frontend/dist` was built on the other branch (it is not in git) | Run step 4 again (`npm run build`), then reload with **Ctrl+Shift+R** |
 | `[LOAD] expected an existing CSV file ...` (Overview stream / Analyze examples) | Dataset not generated | Run step 5 |
 | `[STORAGE] expected every column of 'workflow_analyses' (an older database file? ...)` | A database file from an older version | Stop the server, delete `backend\toc_workflow.db`, start again (it is recreated empty) |
 | Opening http://127.0.0.1:8000/ gives a JSON `NOT_FOUND` error | The dashboard was not built | Run step 4 |

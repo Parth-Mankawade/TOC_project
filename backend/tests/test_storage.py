@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import copy
+import json
 import unittest
 
 from sqlalchemy import create_engine, text
@@ -180,6 +181,30 @@ class TestInitDb(unittest.TestCase):
         with self.assertRaises(StorageError) as ctx:
             init_db(engine)
         self.assertIn("summary", str(ctx.exception))
+        engine.dispose()
+
+    def test_a_database_from_the_previous_model_version_is_refused_with_its_fix(self) -> None:
+        """Timing results stored before the three timing checks existed have no 'checks' or 'trend_z'."""
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        init_db(engine)
+        db = sessionmaker(bind=engine)()
+        t = trained()
+        stored = create_analysis_record(db, AnomalyService(t.paths.markov, t.paths.timing).analyze_order(
+            OrderInput(**request_body(next(o for o in t.orders if o.category == "NORMAL" and o.events == HAPPY)))),
+            HAPPY)
+        init_db(engine)                                   # current records are fine
+        old = dict(stored.timing_evaluation)
+        del old["checks"], old["trend_z"]
+        db.execute(text("UPDATE workflow_analyses SET timing_evaluation = :t WHERE id = :id"),
+                   {"t": json.dumps(old), "id": stored.id})
+        db.commit()
+        with self.assertRaises(StorageError) as ctx:
+            init_db(engine)
+        message = str(ctx.exception)
+        self.assertTrue(message.startswith("[STORAGE] expected analyses stored by the current model version"))
+        self.assertIn("delete it", message)
+        self.assertIn(f"id {stored.id}", message)
+        db.close()
         engine.dispose()
 
 
