@@ -1,0 +1,1473 @@
+{
+  "seeds": [
+    42,
+    7,
+    1,
+    2,
+    3
+  ],
+  "false_alarm_budget": 0.015,
+  "orders_per_seed": {
+    "train": {
+      "normal": 4000,
+      "per_anomaly_type": 100
+    },
+    "validation": {
+      "normal": 2000,
+      "per_anomaly_type": 20
+    },
+    "test": {
+      "normal": 5000,
+      "per_anomaly_type": 50
+    }
+  },
+  "chosen_detector_by_seed": [
+    "kmeans",
+    "kmeans",
+    "kmeans",
+    "kmeans",
+    "kmeans"
+  ],
+  "refund_inputs_chosen_detector_by_seed": [
+    "kmeans",
+    "local_outlier_factor",
+    "local_outlier_factor",
+    "local_outlier_factor",
+    "local_outlier_factor"
+  ],
+  "not_adopted": [
+    "refund_inputs",
+    "retry_aware_path",
+    "detector_ensemble",
+    "stacking"
+  ],
+  "methods": {
+    "previous_hybrid": {
+      "validation": {
+        "f1": {
+          "mean": 0.5401,
+          "std": 0.0531
+        },
+        "precision": {
+          "mean": 0.6145,
+          "std": 0.0302
+        },
+        "recall": {
+          "mean": 0.486,
+          "std": 0.0781
+        },
+        "false_alarm_rate": {
+          "mean": 0.0152,
+          "std": 0.0021
+        },
+        "roc_auc": null,
+        "pr_auc": null,
+        "f1_by_seed": [
+          0.5111,
+          0.6364,
+          0.4824,
+          0.5525,
+          0.5181
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 15.4,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 15.0,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 7.2,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 1.8,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 9.2,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5331,
+          "std": 0.0387
+        },
+        "precision": {
+          "mean": 0.5968,
+          "std": 0.0426
+        },
+        "recall": {
+          "mean": 0.4872,
+          "std": 0.0629
+        },
+        "false_alarm_rate": {
+          "mean": 0.0167,
+          "std": 0.0037
+        },
+        "roc_auc": null,
+        "pr_auc": null,
+        "f1_by_seed": [
+          0.47,
+          0.5629,
+          0.5147,
+          0.5373,
+          0.5806
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 39.4,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 34.2,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 16.8,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 3.2,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 28.2,
+            "total": 50
+          }
+        }
+      }
+    },
+    "tuned_range_rule": {
+      "validation": {
+        "f1": {
+          "mean": 0.4871,
+          "std": 0.0406
+        },
+        "precision": {
+          "mean": 0.5854,
+          "std": 0.0243
+        },
+        "recall": {
+          "mean": 0.418,
+          "std": 0.0479
+        },
+        "false_alarm_rate": {
+          "mean": 0.0147,
+          "std": 0.0004
+        },
+        "roc_auc": {
+          "mean": 0.9099,
+          "std": 0.011
+        },
+        "pr_auc": {
+          "mean": 0.4674,
+          "std": 0.0483
+        },
+        "f1_by_seed": [
+          0.5227,
+          0.5475,
+          0.4458,
+          0.4524,
+          0.4671
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 12.2,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 12.0,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 7.2,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 10.4,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 0.0,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.4444,
+          "std": 0.0384
+        },
+        "precision": {
+          "mean": 0.528,
+          "std": 0.0477
+        },
+        "recall": {
+          "mean": 0.3864,
+          "std": 0.0436
+        },
+        "false_alarm_rate": {
+          "mean": 0.0175,
+          "std": 0.0035
+        },
+        "roc_auc": {
+          "mean": 0.8981,
+          "std": 0.0121
+        },
+        "pr_auc": {
+          "mean": 0.4211,
+          "std": 0.0455
+        },
+        "f1_by_seed": [
+          0.4257,
+          0.454,
+          0.3829,
+          0.4619,
+          0.4976
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 31.0,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 28.2,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 12.4,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 24.8,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 0.2,
+            "total": 50
+          }
+        }
+      }
+    },
+    "zscore_or_markov": {
+      "validation": {
+        "f1": {
+          "mean": 0.546,
+          "std": 0.0457
+        },
+        "precision": {
+          "mean": 0.5983,
+          "std": 0.0225
+        },
+        "recall": {
+          "mean": 0.504,
+          "std": 0.065
+        },
+        "false_alarm_rate": {
+          "mean": 0.0168,
+          "std": 0.0008
+        },
+        "roc_auc": null,
+        "pr_auc": null,
+        "f1_by_seed": [
+          0.5222,
+          0.6332,
+          0.5495,
+          0.5165,
+          0.5085
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 15.0,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 15.4,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 9.4,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 7.4,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 3.2,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5258,
+          "std": 0.041
+        },
+        "precision": {
+          "mean": 0.5852,
+          "std": 0.0408
+        },
+        "recall": {
+          "mean": 0.4808,
+          "std": 0.0594
+        },
+        "false_alarm_rate": {
+          "mean": 0.0172,
+          "std": 0.0033
+        },
+        "roc_auc": null,
+        "pr_auc": null,
+        "f1_by_seed": [
+          0.4855,
+          0.5686,
+          0.4828,
+          0.5125,
+          0.5798
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 37.8,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 35.6,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 22.2,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 14.6,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 10.0,
+            "total": 50
+          }
+        }
+      }
+    },
+    "hybrid": {
+      "validation": {
+        "f1": {
+          "mean": 0.6422,
+          "std": 0.043
+        },
+        "precision": {
+          "mean": 0.6725,
+          "std": 0.0208
+        },
+        "recall": {
+          "mean": 0.616,
+          "std": 0.0634
+        },
+        "false_alarm_rate": {
+          "mean": 0.0149,
+          "std": 0.0002
+        },
+        "roc_auc": {
+          "mean": 0.9455,
+          "std": 0.006
+        },
+        "pr_auc": {
+          "mean": 0.665,
+          "std": 0.0367
+        },
+        "f1_by_seed": [
+          0.6243,
+          0.7255,
+          0.6022,
+          0.6349,
+          0.6243
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 14.6,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 14.4,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 16.0,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 8.0,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 8.6,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.6033,
+          "std": 0.0352
+        },
+        "precision": {
+          "mean": 0.6262,
+          "std": 0.0266
+        },
+        "recall": {
+          "mean": 0.5856,
+          "std": 0.0617
+        },
+        "false_alarm_rate": {
+          "mean": 0.0176,
+          "std": 0.0026
+        },
+        "roc_auc": {
+          "mean": 0.94,
+          "std": 0.0084
+        },
+        "pr_auc": {
+          "mean": 0.6262,
+          "std": 0.0524
+        },
+        "f1_by_seed": [
+          0.5525,
+          0.6133,
+          0.5811,
+          0.6119,
+          0.6575
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 37.4,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 32.2,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 37.2,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 15.6,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 24.0,
+            "total": 50
+          }
+        }
+      }
+    },
+    "hybrid_without_path": {
+      "validation": {
+        "f1": {
+          "mean": 0.6228,
+          "std": 0.0096
+        },
+        "precision": {
+          "mean": 0.6621,
+          "std": 0.005
+        },
+        "recall": {
+          "mean": 0.588,
+          "std": 0.0133
+        },
+        "false_alarm_rate": {
+          "mean": 0.015,
+          "std": 0.0
+        },
+        "roc_auc": {
+          "mean": 0.9338,
+          "std": 0.0084
+        },
+        "pr_auc": {
+          "mean": 0.644,
+          "std": 0.0322
+        },
+        "f1_by_seed": [
+          0.617,
+          0.6387,
+          0.6096,
+          0.6243,
+          0.6243
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 14.4,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 10.8,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 16.4,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 8.4,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 8.8,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5803,
+          "std": 0.0474
+        },
+        "precision": {
+          "mean": 0.6156,
+          "std": 0.0441
+        },
+        "recall": {
+          "mean": 0.552,
+          "std": 0.0661
+        },
+        "false_alarm_rate": {
+          "mean": 0.0173,
+          "std": 0.0031
+        },
+        "roc_auc": {
+          "mean": 0.9283,
+          "std": 0.0143
+        },
+        "pr_auc": {
+          "mean": 0.6091,
+          "std": 0.0625
+        },
+        "f1_by_seed": [
+          0.5221,
+          0.548,
+          0.5843,
+          0.5842,
+          0.6627
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 33.4,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 25.0,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 39.0,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 16.2,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 24.4,
+            "total": 50
+          }
+        }
+      }
+    },
+    "hybrid_without_cluster": {
+      "validation": {
+        "f1": {
+          "mean": 0.6226,
+          "std": 0.0385
+        },
+        "precision": {
+          "mean": 0.6649,
+          "std": 0.0258
+        },
+        "recall": {
+          "mean": 0.586,
+          "std": 0.0484
+        },
+        "false_alarm_rate": {
+          "mean": 0.0147,
+          "std": 0.0006
+        },
+        "roc_auc": {
+          "mean": 0.9373,
+          "std": 0.0054
+        },
+        "pr_auc": {
+          "mean": 0.653,
+          "std": 0.0398
+        },
+        "f1_by_seed": [
+          0.6316,
+          0.6907,
+          0.617,
+          0.5792,
+          0.5946
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 13.8,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 15.0,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 17.0,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 8.8,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 4.0,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.594,
+          "std": 0.0406
+        },
+        "precision": {
+          "mean": 0.6323,
+          "std": 0.0405
+        },
+        "recall": {
+          "mean": 0.5616,
+          "std": 0.0505
+        },
+        "false_alarm_rate": {
+          "mean": 0.0164,
+          "std": 0.0022
+        },
+        "roc_auc": {
+          "mean": 0.9328,
+          "std": 0.0087
+        },
+        "pr_auc": {
+          "mean": 0.6248,
+          "std": 0.0501
+        },
+        "f1_by_seed": [
+          0.5411,
+          0.6129,
+          0.5498,
+          0.6269,
+          0.6393
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 36.2,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 33.2,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 39.6,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 17.0,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 14.4,
+            "total": 50
+          }
+        }
+      }
+    },
+    "hybrid_without_trend": {
+      "validation": {
+        "f1": {
+          "mean": 0.591,
+          "std": 0.053
+        },
+        "precision": {
+          "mean": 0.6439,
+          "std": 0.0277
+        },
+        "recall": {
+          "mean": 0.548,
+          "std": 0.073
+        },
+        "false_alarm_rate": {
+          "mean": 0.015,
+          "std": 0.0
+        },
+        "roc_auc": {
+          "mean": 0.9447,
+          "std": 0.0074
+        },
+        "pr_auc": {
+          "mean": 0.6371,
+          "std": 0.038
+        },
+        "f1_by_seed": [
+          0.5714,
+          0.6935,
+          0.5556,
+          0.587,
+          0.5475
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 14.6,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 14.8,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 9.2,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 7.4,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 8.8,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5558,
+          "std": 0.0364
+        },
+        "precision": {
+          "mean": 0.5951,
+          "std": 0.0413
+        },
+        "recall": {
+          "mean": 0.5248,
+          "std": 0.053
+        },
+        "false_alarm_rate": {
+          "mean": 0.018,
+          "std": 0.0033
+        },
+        "roc_auc": {
+          "mean": 0.9358,
+          "std": 0.0093
+        },
+        "pr_auc": {
+          "mean": 0.5931,
+          "std": 0.0496
+        },
+        "f1_by_seed": [
+          0.5128,
+          0.5743,
+          0.5318,
+          0.5432,
+          0.6167
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 37.6,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 33.0,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 21.2,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 14.4,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 25.0,
+            "total": 50
+          }
+        }
+      }
+    },
+    "hybrid_without_deviation": {
+      "validation": {
+        "f1": {
+          "mean": 0.632,
+          "std": 0.0389
+        },
+        "precision": {
+          "mean": 0.6685,
+          "std": 0.0235
+        },
+        "recall": {
+          "mean": 0.6,
+          "std": 0.0518
+        },
+        "false_alarm_rate": {
+          "mean": 0.0148,
+          "std": 0.0004
+        },
+        "roc_auc": {
+          "mean": 0.9378,
+          "std": 0.0064
+        },
+        "pr_auc": {
+          "mean": 0.6499,
+          "std": 0.0337
+        },
+        "f1_by_seed": [
+          0.617,
+          0.7071,
+          0.5946,
+          0.617,
+          0.6243
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 14.8,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 15.0,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 17.6,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 4.0,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 8.6,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5987,
+          "std": 0.0198
+        },
+        "precision": {
+          "mean": 0.6191,
+          "std": 0.0287
+        },
+        "recall": {
+          "mean": 0.5856,
+          "std": 0.0589
+        },
+        "false_alarm_rate": {
+          "mean": 0.0183,
+          "std": 0.0038
+        },
+        "roc_auc": {
+          "mean": 0.9322,
+          "std": 0.0072
+        },
+        "pr_auc": {
+          "mean": 0.6217,
+          "std": 0.043
+        },
+        "f1_by_seed": [
+          0.5675,
+          0.5976,
+          0.5918,
+          0.6087,
+          0.6278
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 38.4,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 33.2,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 40.4,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 8.2,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 26.2,
+            "total": 50
+          }
+        }
+      }
+    },
+    "refund_inputs": {
+      "validation": {
+        "f1": {
+          "mean": 0.6269,
+          "std": 0.0666
+        },
+        "precision": {
+          "mean": 0.6624,
+          "std": 0.034
+        },
+        "recall": {
+          "mean": 0.598,
+          "std": 0.0937
+        },
+        "false_alarm_rate": {
+          "mean": 0.015,
+          "std": 0.0
+        },
+        "roc_auc": {
+          "mean": 0.9429,
+          "std": 0.0095
+        },
+        "pr_auc": {
+          "mean": 0.6175,
+          "std": 0.0679
+        },
+        "f1_by_seed": [
+          0.6935,
+          0.7192,
+          0.5714,
+          0.5556,
+          0.5946
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 13.4,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 14.4,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 15.2,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 7.8,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 9.0,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5987,
+          "std": 0.027
+        },
+        "precision": {
+          "mean": 0.6355,
+          "std": 0.0311
+        },
+        "recall": {
+          "mean": 0.572,
+          "std": 0.0634
+        },
+        "false_alarm_rate": {
+          "mean": 0.0167,
+          "std": 0.0036
+        },
+        "roc_auc": {
+          "mean": 0.9379,
+          "std": 0.0065
+        },
+        "pr_auc": {
+          "mean": 0.5949,
+          "std": 0.0188
+        },
+        "f1_by_seed": [
+          0.5708,
+          0.6342,
+          0.5674,
+          0.5973,
+          0.6238
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 34.6,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 30.8,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 37.4,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 15.8,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 24.4,
+            "total": 50
+          }
+        }
+      }
+    },
+    "retry_aware_path": {
+      "validation": {
+        "f1": {
+          "mean": 0.6233,
+          "std": 0.0371
+        },
+        "precision": {
+          "mean": 0.6618,
+          "std": 0.0187
+        },
+        "recall": {
+          "mean": 0.59,
+          "std": 0.0525
+        },
+        "false_alarm_rate": {
+          "mean": 0.015,
+          "std": 0.0
+        },
+        "roc_auc": {
+          "mean": 0.943,
+          "std": 0.005
+        },
+        "pr_auc": {
+          "mean": 0.6512,
+          "std": 0.0354
+        },
+        "f1_by_seed": [
+          0.6096,
+          0.6935,
+          0.587,
+          0.6022,
+          0.6243
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 14.4,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 13.0,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 15.6,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 7.8,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 8.2,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.5849,
+          "std": 0.051
+        },
+        "precision": {
+          "mean": 0.6187,
+          "std": 0.046
+        },
+        "recall": {
+          "mean": 0.5608,
+          "std": 0.0802
+        },
+        "false_alarm_rate": {
+          "mean": 0.0174,
+          "std": 0.0036
+        },
+        "roc_auc": {
+          "mean": 0.9374,
+          "std": 0.0083
+        },
+        "pr_auc": {
+          "mean": 0.6138,
+          "std": 0.0565
+        },
+        "f1_by_seed": [
+          0.4955,
+          0.5922,
+          0.5781,
+          0.6078,
+          0.6511
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 34.2,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 29.6,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 37.0,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 15.6,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 23.8,
+            "total": 50
+          }
+        }
+      }
+    },
+    "detector_ensemble": {
+      "validation": {
+        "f1": {
+          "mean": 0.6404,
+          "std": 0.0389
+        },
+        "precision": {
+          "mean": 0.6706,
+          "std": 0.0191
+        },
+        "recall": {
+          "mean": 0.614,
+          "std": 0.0564
+        },
+        "false_alarm_rate": {
+          "mean": 0.015,
+          "std": 0.0
+        },
+        "roc_auc": {
+          "mean": 0.9494,
+          "std": 0.0057
+        },
+        "pr_auc": {
+          "mean": 0.6823,
+          "std": 0.0388
+        },
+        "f1_by_seed": [
+          0.6458,
+          0.7129,
+          0.6022,
+          0.6243,
+          0.617
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 14.2,
+            "total": 20
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 14.4,
+            "total": 20
+          },
+          "FAST_FULFILMENT": {
+            "mean": 16.4,
+            "total": 20
+          },
+          "STALLED_DELIVERY": {
+            "mean": 8.2,
+            "total": 20
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 8.2,
+            "total": 20
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.6077,
+          "std": 0.0272
+        },
+        "precision": {
+          "mean": 0.6237,
+          "std": 0.0212
+        },
+        "recall": {
+          "mean": 0.596,
+          "std": 0.0556
+        },
+        "false_alarm_rate": {
+          "mean": 0.0181,
+          "std": 0.0026
+        },
+        "roc_auc": {
+          "mean": 0.9426,
+          "std": 0.0089
+        },
+        "pr_auc": {
+          "mean": 0.6383,
+          "std": 0.0461
+        },
+        "f1_by_seed": [
+          0.5666,
+          0.6196,
+          0.5872,
+          0.6227,
+          0.6426
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 37.8,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 32.2,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 37.8,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 16.0,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 25.2,
+            "total": 50
+          }
+        }
+      }
+    },
+    "stacking": {
+      "validation": {
+        "f1": {
+          "mean": 0.6158,
+          "std": 0.0417
+        },
+        "precision": {
+          "mean": 0.6577,
+          "std": 0.0228
+        },
+        "recall": {
+          "mean": 0.58,
+          "std": 0.0551
+        },
+        "false_alarm_rate": {
+          "mean": 0.015,
+          "std": 0.0
+        },
+        "roc_auc": {
+          "mean": 0.9556,
+          "std": 0.011
+        },
+        "pr_auc": {
+          "mean": 0.6923,
+          "std": 0.0432
+        },
+        "f1_by_seed": [
+          0.617,
+          0.6458,
+          0.5393,
+          0.617,
+          0.6598
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 8.0,
+            "total": 10
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 8.0,
+            "total": 10
+          },
+          "FAST_FULFILMENT": {
+            "mean": 6.0,
+            "total": 10
+          },
+          "STALLED_DELIVERY": {
+            "mean": 3.2,
+            "total": 10
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 3.8,
+            "total": 10
+          }
+        }
+      },
+      "test": {
+        "f1": {
+          "mean": 0.6093,
+          "std": 0.032
+        },
+        "precision": {
+          "mean": 0.6453,
+          "std": 0.0525
+        },
+        "recall": {
+          "mean": 0.5824,
+          "std": 0.0558
+        },
+        "false_alarm_rate": {
+          "mean": 0.0164,
+          "std": 0.0039
+        },
+        "roc_auc": {
+          "mean": 0.946,
+          "std": 0.0077
+        },
+        "pr_auc": {
+          "mean": 0.6461,
+          "std": 0.0424
+        },
+        "f1_by_seed": [
+          0.5726,
+          0.6292,
+          0.6103,
+          0.5768,
+          0.6576
+        ],
+        "caught_by_type": {
+          "CARD_TESTING": {
+            "mean": 41.0,
+            "total": 50
+          },
+          "REPEATED_PAYMENT_FAILURE": {
+            "mean": 32.8,
+            "total": 50
+          },
+          "FAST_FULFILMENT": {
+            "mean": 31.0,
+            "total": 50
+          },
+          "STALLED_DELIVERY": {
+            "mean": 14.2,
+            "total": 50
+          },
+          "HIGH_VALUE_QUICK_REFUND": {
+            "mean": 26.6,
+            "total": 50
+          }
+        }
+      }
+    }
+  },
+  "hybrid_on_stacking_half": {
+    "f1": {
+      "mean": 0.667,
+      "std": 0.037
+    },
+    "precision": {
+      "mean": 0.6839,
+      "std": 0.0174
+    },
+    "recall": {
+      "mean": 0.652,
+      "std": 0.056
+    },
+    "false_alarm_rate": {
+      "mean": 0.015,
+      "std": 0.0
+    },
+    "roc_auc": {
+      "mean": 0.9481,
+      "std": 0.0099
+    },
+    "pr_auc": {
+      "mean": 0.6889,
+      "std": 0.0397
+    },
+    "f1_by_seed": [
+      0.6316,
+      0.7379,
+      0.6598,
+      0.6598,
+      0.6458
+    ],
+    "caught_by_type": {
+      "CARD_TESTING": {
+        "mean": 7.2,
+        "total": 10
+      },
+      "REPEATED_PAYMENT_FAILURE": {
+        "mean": 8.2,
+        "total": 10
+      },
+      "FAST_FULFILMENT": {
+        "mean": 8.0,
+        "total": 10
+      },
+      "STALLED_DELIVERY": {
+        "mean": 4.8,
+        "total": 10
+      },
+      "HIGH_VALUE_QUICK_REFUND": {
+        "mean": 4.4,
+        "total": 10
+      }
+    }
+  },
+  "stacking_leave_one_type_out": {
+    "CARD_TESTING": {
+      "validation": {
+        "mean_caught": 7.8,
+        "total": 10
+      },
+      "test": {
+        "mean_caught": 39.6,
+        "total": 50
+      }
+    },
+    "REPEATED_PAYMENT_FAILURE": {
+      "validation": {
+        "mean_caught": 6.8,
+        "total": 10
+      },
+      "test": {
+        "mean_caught": 28.2,
+        "total": 50
+      }
+    },
+    "FAST_FULFILMENT": {
+      "validation": {
+        "mean_caught": 5.0,
+        "total": 10
+      },
+      "test": {
+        "mean_caught": 25.8,
+        "total": 50
+      }
+    },
+    "STALLED_DELIVERY": {
+      "validation": {
+        "mean_caught": 1.8,
+        "total": 10
+      },
+      "test": {
+        "mean_caught": 4.8,
+        "total": 50
+      }
+    },
+    "HIGH_VALUE_QUICK_REFUND": {
+      "validation": {
+        "mean_caught": 3.6,
+        "total": 10
+      },
+      "test": {
+        "mean_caught": 23.6,
+        "total": 50
+      }
+    }
+  }
+}
