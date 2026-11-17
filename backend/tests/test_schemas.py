@@ -89,6 +89,10 @@ class TestResponses(unittest.TestCase):
     def test_timing_check_must_be_consistent(self) -> None:
         self.assert_rejected(lambda r: r["timing_evaluation"].update(model_name="svm"), "model_name")
         self.assert_rejected(lambda r: r["timing_evaluation"].update(anomaly_score=5.0), "anomaly_score")
+        self.assert_rejected(lambda r: r["timing_evaluation"]["checks"].pop(), "checks")
+        self.assert_rejected(lambda r: r["timing_evaluation"]["checks"][0].update(
+            is_flagged=not r["timing_evaluation"]["checks"][0]["is_flagged"]), "is_flagged")
+        self.assert_rejected(lambda r: r["timing_evaluation"].pop("trend_z"), "trend_z")
 
     def test_unusual_flag_follows_the_percentile(self) -> None:
         good = {"name": "order_amount", "step": None, "unit": "currency", "value": 9000.0, "normal_low": 300.0,

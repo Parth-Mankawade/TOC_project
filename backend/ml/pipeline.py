@@ -1,4 +1,4 @@
-"""One command for the whole ML pipeline: GENERATE -> LOAD -> TRAIN -> EVALUATE.
+"""One command for the whole ML pipeline: GENERATE -> LOAD -> TRAIN -> CALIBRATE -> EVALUATE.
 
     .venv\\Scripts\\python.exe -m backend.ml.pipeline
 
@@ -20,6 +20,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
+from backend.ml import hybrid
 from backend.ml.dataset.generator import OUTPUT_CSV, RANDOM_SEED, SPLIT_SIZES, SplitSize, generate_dataset
 from backend.ml.dataset.loader import load_orders, select
 from backend.ml.evaluation.evaluate import DEFAULT_RESULTS_PATH, evaluate
@@ -53,10 +54,12 @@ def run_pipeline(paths: PipelinePaths = DEFAULT_PATHS, seed: int = RANDOM_SEED,
     def timed(rows):
         return [(o.events, o.timestamps, o.amount) for o in rows]
 
-    save_markov_model(fit_markov_model([o.events for o in train], [o.events for o in val_normal]), paths.markov)
+    markov = fit_markov_model([o.events for o in train], [o.events for o in val_normal])
     candidates = fit_candidates(timed(train), timed(val_normal))
     selection = validation_report(candidates, timed(val_normal), timed(val_anomalies))
-    save_timing_model(candidates[selection["chosen"]], paths.timing)
+    markov, timing = hybrid.calibrate(markov, candidates[selection["chosen"]], timed(val_normal))
+    save_markov_model(markov, paths.markov)
+    save_timing_model(timing, paths.timing)
 
     markov = load_markov_model(paths.markov)
     candidates[selection["chosen"]] = load_timing_model(paths.timing)
@@ -75,14 +78,18 @@ def format_summary(results: Dict[str, Any]) -> str:
         f"({results['dataset']['test_anomaly_share']:.1%}).",
         f"Timing model chosen on validation: {results['model_selection']['chosen']}",
         "",
-        f"{'model':<30}{'F1':>7}{'precision':>11}{'recall':>8}{'false alarms':>15}{'caught':>10}",
+        f"Hybrid threshold level {results['hybrid']['threshold_level']:.3f}: flags "
+        f"{results['hybrid']['validation_flag_rate']:.2%} of normal validation orders.",
+        "",
+        f"{'model':<30}{'F1':>7}{'precision':>11}{'recall':>8}{'PR-AUC':>8}{'false alarms':>15}{'caught':>10}",
     ]
     for m in results["test"]["models"]:
-        lines.append(f"{m['model']:<30}{m['f1']:>7.3f}{m['precision']:>11.3f}{m['recall']:>8.3f}"
+        pr_auc = "      -" if m["pr_auc"] is None else f"{m['pr_auc']:>7.3f}"
+        lines.append(f"{m['model']:<30}{m['f1']:>7.3f}{m['precision']:>11.3f}{m['recall']:>8.3f} {pr_auc}"
                      f"{m['false_alarms']:>8} / {m['normal_orders']:<5}{m['anomalies_caught']:>5} / {m['anomalous_orders']}")
     head = results["headline"]
-    lines += ["", f"Headline F1: hybrid {head['hybrid']:.3f} vs range_rule {head['range_rule']:.3f} "
-                  f"vs always_normal {head['always_normal']:.3f}"]
+    lines += ["", f"Headline F1: hybrid {head['hybrid']:.3f} vs zscore_or_markov {head['zscore_or_markov']:.3f} "
+                  f"vs tuned_range_rule {head['tuned_range_rule']:.3f} vs always_normal {head['always_normal']:.3f}"]
     return "\n".join(lines)
 
 

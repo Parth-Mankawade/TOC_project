@@ -15,8 +15,19 @@ Each order becomes MODEL_INPUTS, numbers that exist for every order:
   refunded          1 if the order ended in a refund, else 0
   cancelled         1 if the order ended in a cancellation, else 0
 
-An order with a single event has no steps; its three step inputs are
-NO_STEPS_Z (0: no timing deviation) by definition.
+An order with a single event has no steps; its step inputs are NO_STEPS_Z
+(0: no timing deviation) by definition.
+
+Two further scores need no fitted detector, only the z-scores (timing_summary):
+  trend      |sum of the step z-scores| / sqrt(number of steps). Under normal
+             behaviour the step z-scores are independent with mean 0 and variance
+             1, so this is about 0.7 on average whatever the order's length, and
+             it grows when every step is a little fast (or a little slow) even
+             though no single step stands out.
+  deviation  -log10 of the chi-square tail probability of (sum of squared step
+             z-scores + squared amount z-score), with one degree of freedom per
+             value. It grows when one value, or several, lie far from normal in
+             either direction.
 """
 
 from __future__ import annotations
@@ -28,12 +39,15 @@ import math
 from statistics import NormalDist
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
+from scipy.stats import chi2
+
 from backend.core.errors import FeatureError, TrainError
 from backend.fsm.reachability import legal_step_kinds
 from backend.fsm.validator import validate_trace
 
 MODEL_INPUTS = ["amount_z", "slowest_step_z", "fastest_step_z", "mean_step_z",
                 "payment_failures", "refunded", "cancelled"]
+SMALLEST_TAIL_PROBABILITY = 1e-300   # keeps -log10 finite for values the model calls impossible
 NO_STEPS_Z = 0.0
 NORMAL_BAND = (2.5, 97.5)       # percentiles: a value outside the middle 95% of normal orders is "unusual"
 MIN_TRAINING_ORDERS = 100
@@ -163,6 +177,31 @@ def order_features(stats: FeatureStats, events: Sequence[str], timestamps: Seque
         "payment_failures": float(events.count("FAIL_PAYMENT")),
         "refunded": float(events[-1] == "REFUND_ORDER"),
         "cancelled": float(events[-1] == "CANCEL_ORDER"),
+    }
+
+
+def timing_summary(stats: FeatureStats, events: Sequence[str], timestamps: Sequence[datetime],
+                   amount: float) -> Dict[str, float]:
+    """The trend and deviation scores of one valid, complete order (see the module docstring).
+
+    Returns:
+        trend, deviation, and what they are made of: step_count, trend_z (signed:
+        negative = faster than normal overall) and sum_squared_z.
+
+    Raises:
+        FeatureError: As order_features().
+    """
+    steps = _check_order(events, timestamps, amount)
+    zs = [stats.step(s).z(s.seconds) for s in steps]
+    trend_z = sum(zs) / math.sqrt(len(zs)) if zs else NO_STEPS_Z
+    sum_squared_z = sum(z * z for z in zs) + stats.amount.z(amount) ** 2
+    tail = max(float(chi2.sf(sum_squared_z, len(zs) + 1)), SMALLEST_TAIL_PROBABILITY)
+    return {
+        "trend": abs(trend_z),
+        "deviation": -math.log10(tail),
+        "step_count": float(len(zs)),
+        "trend_z": trend_z,
+        "sum_squared_z": sum_squared_z,
     }
 
 

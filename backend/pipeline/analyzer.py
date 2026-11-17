@@ -6,9 +6,11 @@ Order of checks:
 2. Valid, complete orders:
    - Markov chain: how likely is this event order under normal behaviour?
      Always runs.
-   - Timing-and-amount model: are the times, the amount and the outcome
-     unusual together? Runs when event timestamps and the order amount are given.
-   - Flagged by either model -> STATISTICAL_ANOMALY, otherwise NORMAL.
+   - Timing-and-amount model: three checks (cluster, trend, deviation) on the
+     times, the amount and the outcome. Runs when event timestamps and the
+     order amount are given.
+   - Both models share one threshold (backend/ml/hybrid.py). Flagged by any
+     check -> STATISTICAL_ANOMALY, otherwise NORMAL.
 
 Every result carries a one-line summary, diagnostics (severity, root cause, key
 factors, recommended action) and the full output of every check that ran.
@@ -38,8 +40,12 @@ TIMING_SKIPPED_NO_DATA = "Timing check skipped: event timestamps and order amoun
 # in the order, is below 10%: one rare step (e.g. 0.03), or a common one repeated (0.12 x 5 times).
 UNUSUAL_STEP_PROBABILITY = 0.1
 CARD_TESTING_HINT_FAILURES = 2        # failed payments from which the card-testing hint is given
-COMBINATION_MIN_DISTANCE = 30.0       # percentile points from the median for a value to count as contributing
-MAX_COMBINATION_REASONS = 2           # values listed when only the combination is unusual
+FURTHEST_MIN_DISTANCE = 30.0          # percentile points from the median for a value to be listed as far from typical
+MAX_FURTHEST_REASONS = 2              # values listed when no single value is outside its normal range
+
+CHECK_LABELS = {"cluster": "Cluster check (distance from typical normal orders)",
+                "trend": "Trend check (steps consistently fast or slow)",
+                "deviation": "Deviation check (values far outside their normal range)"}
 
 SEVERITY = {"RULE_VIOLATION": "CRITICAL", "STATISTICAL_ANOMALY": "WARNING",
             "VALID_INCOMPLETE": "INFO", "NORMAL": "INFO"}
@@ -78,16 +84,33 @@ def describe_measurement(m: Dict[str, Any]) -> str:
 
 
 def timing_reasons(timing: Dict[str, Any]) -> List[str]:
-    """Why the timing model flagged an order: every value outside the middle 95% of normal
-    orders, or, when there is none, the values furthest from normal that make up the combination."""
+    """The values behind a timing flag: every value outside the middle 95% of normal
+    orders, or, when there is none, the values furthest from typical."""
     measurements = timing["measurements"]
     unusual = [m for m in measurements if m["is_unusual"]]
     if unusual:
         return [describe_measurement(m) for m in unusual]
-    contributing = sorted((m for m in measurements if abs(m["percentile"] - 50.0) >= COMBINATION_MIN_DISTANCE),
-                          key=lambda m: -abs(m["percentile"] - 50.0))[:MAX_COMBINATION_REASONS]
-    return (["No single value is outside the middle 95% of normal orders; the combination is what is unusual:"]
-            + [describe_measurement(m) for m in contributing])
+    furthest = sorted((m for m in measurements if abs(m["percentile"] - 50.0) >= FURTHEST_MIN_DISTANCE),
+                      key=lambda m: -abs(m["percentile"] - 50.0))[:MAX_FURTHEST_REASONS]
+    return (["No single value is outside the middle 95% of normal orders; the values furthest from typical are:"]
+            + [describe_measurement(m) for m in furthest])
+
+
+def trend_direction(timing: Dict[str, Any]) -> str:
+    return "faster" if timing["trend_z"] < 0 else "slower"
+
+
+def timing_causes(timing: Dict[str, Any]) -> List[str]:
+    """One plain-language cause per timing check that flagged the order."""
+    flagged = {c["name"] for c in timing["checks"] if c["is_flagged"]}
+    causes = []
+    if "cluster" in flagged:
+        causes.append("its times, amount and outcome are far from those of typical normal orders")
+    if "trend" in flagged:
+        causes.append(f"its steps were consistently {trend_direction(timing)} than normal")
+    if "deviation" in flagged:
+        causes.append("one or more of its values are far outside their normal range")
+    return causes
 
 
 def mark_unusual_steps(transitions: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -236,17 +259,22 @@ def analyze_trace(event_sequence: Union[str, Sequence[str]], event_timestamps: O
     frequency = describe_probability(path["path_log10_probability"])
     threshold = describe_probability(markov.threshold_log10_probability)
     path_factors = [f"Event order frequency under normal behaviour: {frequency}",
-                    f"Path check flags orders rarer than {threshold} (the rarest 1% of normal paths)",
+                    f"Path check flags orders rarer than {threshold} "
+                    f"({markov.validation_flag_rate:.1%} of normal validation orders)",
                     f"Path anomaly score: {path['anomaly_score']:.2f} (above 0 means flagged; +1 = 10x rarer)"]
-    timing_factors = (["Timing/amount check: not run (no event timestamps and order amount provided)"]
-                      if timing is None else
-                      [f"Timing/amount model ({timing['model_name']}) score: {timing['anomaly_score']:.2f} "
-                       "(above 0 means flagged)"])
+    if timing is None:
+        timing_factors = ["Timing/amount checks: not run (no event timestamps and order amount provided)"]
+    else:
+        timing_factors = [f"{CHECK_LABELS[c['name']]} score: {c['score']:.2f} (above 0 means flagged)"
+                          for c in timing["checks"]]
+        timing_factors[0] += f"; detector: {timing['model_name']}"
+        timing_factors.append(f"Overall, the steps ran {trend_direction(timing)} than normal "
+                              f"(combined z-score {timing['trend_z']:+.2f})")
 
     path_flagged = path["is_ml_anomaly"]
     timing_flagged = timing is not None and timing["is_timing_anomaly"]
     if not (path_flagged or timing_flagged):
-        timing_note = ("its timing and amount are within normal behaviour" if timing is not None
+        timing_note = ("its times, amount and outcome are within normal behaviour" if timing is not None
                        else "its timing was not checked")
         summary = (f"Normal: the order finished in '{state}'; this event order occurs in {frequency} under "
                    f"normal behaviour, and {timing_note}.")
@@ -271,10 +299,9 @@ def analyze_trace(event_sequence: Union[str, Sequence[str]], event_timestamps: O
                            "or a payment gateway problem.")
     factors += timing_factors
     if timing_flagged:
-        reasons = timing_reasons(timing)
-        causes.append("its timing, amount and outcome are unusual together")
-        factors += reasons
-        actions.append("Check the values listed as unusual against the order's records.")
+        causes += timing_causes(timing)
+        factors += timing_reasons(timing)
+        actions.append("Check the listed values against the order's records.")
     summary = "Statistical anomaly: the order is legal and complete, but " + "; and ".join(causes) + "."
     diagnostics = {
         "root_cause": "The order follows every rule, but " + " and ".join(causes) + ".",

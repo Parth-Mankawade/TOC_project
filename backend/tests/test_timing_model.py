@@ -1,7 +1,8 @@
 """TRAIN / MODEL checkpoints for the timing-and-amount model (backend/ml/timing/model.py).
 
 Candidates (Isolation Forest, k-means clustering, Local Outlier Factor) are fitted
-on normal training orders; each threshold flags 1% of normal validation orders.
+on normal training orders. Every check (cluster, trend, deviation) is scaled on the
+normal validation orders so that level 1 is the point 1% of them exceed.
 """
 
 from __future__ import annotations
@@ -16,13 +17,18 @@ import numpy as np
 from backend.core.errors import ModelLoadError, TrainError
 from backend.ml.dataset import generator as gen
 from backend.ml.dataset.loader import load_orders, select
-from backend.ml.timing.features import MODEL_INPUTS
+from backend.ml.timing.features import MODEL_INPUTS, timing_summary
 from backend.ml.timing.model import (
+    CHECKS,
+    DEFAULT_THRESHOLD,
     DETECTOR_NAMES,
     NEAR_TIE_F1,
-    THRESHOLD_PERCENTILE,
+    SCALE_PERCENTILE,
+    Scale,
     anomaly_scores,
+    check_levels,
     choose_detector,
+    detector_scores,
     fit_timing_model,
     load_timing_model,
     save_timing_model,
@@ -49,17 +55,46 @@ class TimingData(unittest.TestCase):
 
 class TestCandidates(TimingData):
 
-    def test_every_candidate_flags_at_most_one_percent_of_validation_normals(self) -> None:
-        self.assertEqual(THRESHOLD_PERCENTILE, 99.0)
+    def test_every_check_puts_one_percent_of_validation_normals_above_level_one(self) -> None:
+        self.assertEqual((SCALE_PERCENTILE, DEFAULT_THRESHOLD), (99.0, 1.0))
         for name, model in self.models.items():
-            flagged = float(np.mean(anomaly_scores(model, self.val_normal) > 0))
-            self.assertTrue(0.005 <= flagged <= 0.01, (name, flagged))
+            self.assertEqual(model.threshold, DEFAULT_THRESHOLD)
+            levels = check_levels(model, self.val_normal)
+            self.assertEqual(list(levels), CHECKS)
+            for check in CHECKS:
+                flagged = float(np.mean(levels[check] > 1))
+                self.assertTrue(0.005 <= flagged <= 0.01, (name, check, flagged))
+                self.assertAlmostEqual(float(np.median(levels[check])), 0.0, places=9, msg=(name, check))
+            np.testing.assert_allclose(detector_scores(model, self.val_normal), levels["cluster"] - 1)
+
+    def test_anomaly_score_is_the_highest_check_level_minus_the_threshold(self) -> None:
+        model = self.models["kmeans"]
+        levels = check_levels(model, self.val_anomalies)
+        expected = np.max([levels[c] for c in CHECKS], axis=0) - model.threshold
+        np.testing.assert_allclose(anomaly_scores(model, self.val_anomalies), expected)
+
+    def test_trend_and_deviation_levels_come_from_the_z_scores(self) -> None:
+        model = self.models["kmeans"]
+        events, stamps, amount = self.val_anomalies[0]
+        summary = timing_summary(model.stats, events, stamps, amount)
+        levels = check_levels(model, [(events, stamps, amount)])
+        for check in ("trend", "deviation"):
+            scale = model.scales[check]
+            self.assertAlmostEqual(float(levels[check][0]), (summary[check] - scale.median) / (scale.high - scale.median))
 
     def test_every_candidate_scores_anomalies_higher_than_normal_orders(self) -> None:
         for name, model in self.models.items():
-            normal = anomaly_scores(model, self.val_normal)
-            anomalous = anomaly_scores(model, self.val_anomalies)
+            normal = detector_scores(model, self.val_normal)
+            anomalous = detector_scores(model, self.val_anomalies)
             self.assertGreater(float(np.median(anomalous)), float(np.median(normal)), name)
+
+    def test_scale(self) -> None:
+        scale = Scale.fit(list(range(101)), "example")        # median 50, 99th percentile 99
+        self.assertEqual((scale.median, scale.high), (50.0, 99.0))
+        self.assertEqual((scale.level(50.0), scale.level(99.0), scale.level(148.0)), (0.0, 1.0, 2.0))
+        with self.assertRaises(TrainError) as ctx:
+            Scale.fit([3.0] * 200, "example")
+        self.assertIn("example", str(ctx.exception))
 
     def test_score_order_reports_inputs_measurements_and_a_consistent_verdict(self) -> None:
         model = self.models["isolation_forest"]
@@ -71,6 +106,11 @@ class TestCandidates(TimingData):
         self.assertEqual(result["prediction"], "ANOMALY" if result["is_timing_anomaly"] else "NORMAL")
         self.assertEqual(result["measurements"][0]["name"], "order_amount")
         self.assertAlmostEqual(result["anomaly_score"], float(anomaly_scores(model, [(events, stamps, amount)])[0]))
+        self.assertEqual([c["name"] for c in result["checks"]], CHECKS)
+        self.assertEqual(result["anomaly_score"], max(c["score"] for c in result["checks"]))
+        for c in result["checks"]:
+            self.assertEqual(c["is_flagged"], c["score"] > 0)
+        self.assertEqual(result["trend_z"], timing_summary(model.stats, events, stamps, amount)["trend_z"])
 
 
 class TestSelection(TimingData):
@@ -150,6 +190,13 @@ class TestPersistence(TimingData):
         payload["metadata"]["model_inputs"] = ["amount_z"]
         joblib.dump(payload, self.path)
         self.assert_load_error("model_inputs")
+
+    def test_saved_before_the_checks_existed(self) -> None:
+        save_timing_model(self.models["kmeans"], self.path)
+        payload = joblib.load(self.path)
+        del payload["metadata"]["checks"]
+        joblib.dump(payload, self.path)
+        self.assert_load_error("checks")
 
 
 if __name__ == "__main__":

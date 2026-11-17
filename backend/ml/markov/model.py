@@ -15,13 +15,23 @@ loops) becomes very unlikely, while a rare but ordinary path (for example
 FAIL_PAYMENT then CANCEL_ORDER) stays reasonably likely.
 
 Decision rule (set on validation orders the model was not fitted on):
-    threshold = THRESHOLD_PERCENTILE-th percentile of log10 P(path) over the
-    normal validation orders. A path is an anomaly if log10 P(path) < threshold,
-    i.e. it is rarer than all but the rarest 1% of normal orders' paths.
+    A path is an anomaly if log10 P(path) < threshold.
 
     anomaly_score = threshold - log10 P(path)
     anomaly_score > 0 means anomaly. Each +1 means 10x less likely than the
     threshold.
+
+Two reference points are measured on the normal validation orders: the median
+log10 P(path), and the RARE_PERCENTILE-th percentile (only 1% of normal orders
+have a rarer path). They give the path a level on the same scale as the timing
+model's checks:
+
+    level = (median - log10 P(path)) / (median - rare)
+
+level 0 is a typical normal path, level 1 the rarest-1% point. A freshly fitted
+model has threshold = rare (level 1). backend/ml/hybrid.py then moves the
+threshold to the level it chooses for this check and the timing model's checks
+together (with_level_threshold).
 
 This is a probabilistic finite automaton: the FSM says which transitions are
 allowed, the learned probabilities say how likely each allowed one is.
@@ -30,7 +40,7 @@ allowed, the learned probabilities say how likely each allowed one is.
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 from pathlib import Path
@@ -47,7 +57,7 @@ DEFAULT_MODEL_PATH = MODELS_DIR / "markov_chain.json"
 
 MODEL_NAME = "MarkovChain"
 DEFAULT_ALPHA = 1.0
-THRESHOLD_PERCENTILE = 1.0     # flag paths rarer than 99% of normal validation orders' paths
+RARE_PERCENTILE = 1.0          # level 1: only 1% of normal validation orders have a rarer path
 MIN_VALIDATION_ORDERS = 100
 
 # Probabilities in a saved model are rounded; per-state sums may drift by this much.
@@ -63,7 +73,15 @@ class MarkovPathModel:
     alpha: float
     training_sample_count: int
     validation_sample_count: int
-    threshold_log10_probability: float
+    median_log10_probability: float     # over normal validation orders
+    rare_log10_probability: float       # RARE_PERCENTILE-th percentile over normal validation orders
+    threshold_log10_probability: float  # paths below this are flagged
+    validation_flag_rate: float         # share of normal validation orders below the threshold
+
+    def level(self, log10_probability: Any) -> Any:
+        """0 = a typical normal path, 1 = the rarest-1% point of normal validation paths."""
+        return ((self.median_log10_probability - log10_probability)
+                / (self.median_log10_probability - self.rare_log10_probability))
 
 
 # ---------------------------------------------------------------------------
@@ -122,14 +140,48 @@ def fit_markov_model(
         _log10_path(probabilities, _valid_complete(trace, f"validation order {idx}")["history"])
         for idx, trace in enumerate(validation_traces)
     ]
+    median, rare = float(np.median(validation_logs)), float(np.percentile(validation_logs, RARE_PERCENTILE))
+    if not rare < median:
+        raise TrainError(f"a {RARE_PERCENTILE:g}th percentile of log10 P(path) below the median",
+                         f"median {median}, percentile {rare}", "normal validation orders")
     return MarkovPathModel(
         probabilities=probabilities,
         counts={key: counts[key] for key in probabilities},
         alpha=float(alpha),
         training_sample_count=len(traces),
         validation_sample_count=len(validation_traces),
-        threshold_log10_probability=float(np.percentile(validation_logs, THRESHOLD_PERCENTILE)),
+        median_log10_probability=median,
+        rare_log10_probability=rare,
+        threshold_log10_probability=rare,
+        validation_flag_rate=float(np.mean(np.asarray(validation_logs) < rare)),
     )
+
+
+def path_log10_probability(model: MarkovPathModel, events: Sequence[str]) -> float:
+    """log10 P(path) of an FSM-valid trace.
+
+    Raises:
+        FeatureError: If the trace breaks an FSM rule (it has no probability).
+    """
+    result = validate_trace(list(events))
+    if not result["is_valid"]:
+        raise FeatureError("an FSM-valid order", list(events), result["error"]["message"])
+    return _log10_path(model.probabilities, result["history"])
+
+
+def with_level_threshold(model: MarkovPathModel, level: float,
+                         validation_traces: Sequence[Sequence[str]]) -> MarkovPathModel:
+    """A copy of the model that flags paths above the given level (see the module docstring).
+
+    Raises:
+        TrainError: If the level is not positive.
+    """
+    if not level > 0:
+        raise TrainError("a positive level", level, "with_level_threshold")
+    threshold = model.median_log10_probability - level * (model.median_log10_probability - model.rare_log10_probability)
+    logs = [path_log10_probability(model, trace) for trace in validation_traces]
+    return replace(model, threshold_log10_probability=threshold,
+                   validation_flag_rate=float(np.mean(np.asarray(logs) < threshold)))
 
 
 # ---------------------------------------------------------------------------
@@ -197,9 +249,12 @@ def model_to_dict(model: MarkovPathModel) -> Dict[str, Any]:
         "smoothing_alpha": model.alpha,
         "training_sample_count": model.training_sample_count,
         "validation_sample_count": model.validation_sample_count,
-        "threshold_percentile": THRESHOLD_PERCENTILE,
-        "threshold_rule": "percentile of log10 P(path) over normal validation orders",
+        "rare_percentile": RARE_PERCENTILE,
+        "median_log10_probability": model.median_log10_probability,
+        "rare_log10_probability": model.rare_log10_probability,
+        "threshold_rule": "set by backend/ml/hybrid.py together with the timing model's checks",
         "threshold_log10_probability": model.threshold_log10_probability,
+        "validation_flag_rate": model.validation_flag_rate,
         "transitions": [
             {
                 "from_state": state,
@@ -221,7 +276,8 @@ def model_from_dict(data: Dict[str, Any], source: str = "markov model") -> Marko
             or invalid probabilities.
     """
     required = ["model_name", "smoothing_alpha", "training_sample_count", "validation_sample_count",
-                "threshold_log10_probability", "transitions"]
+                "median_log10_probability", "rare_log10_probability", "threshold_log10_probability",
+                "validation_flag_rate", "transitions"]
     missing = [key for key in required if key not in data]
     if missing:
         raise ModelLoadError(f"fields {required}", f"missing {missing}", source)
@@ -257,7 +313,10 @@ def model_from_dict(data: Dict[str, Any], source: str = "markov model") -> Marko
         alpha=float(data["smoothing_alpha"]),
         training_sample_count=int(data["training_sample_count"]),
         validation_sample_count=int(data["validation_sample_count"]),
+        median_log10_probability=float(data["median_log10_probability"]),
+        rare_log10_probability=float(data["rare_log10_probability"]),
         threshold_log10_probability=float(data["threshold_log10_probability"]),
+        validation_flag_rate=float(data["validation_flag_rate"]),
     )
 
 

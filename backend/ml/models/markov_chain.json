@@ -3,9 +3,12 @@
   "smoothing_alpha": 1.0,
   "training_sample_count": 4000,
   "validation_sample_count": 2000,
-  "threshold_percentile": 1.0,
-  "threshold_rule": "percentile of log10 P(path) over normal validation orders",
-  "threshold_log10_probability": -3.2987594347248095,
+  "rare_percentile": 1.0,
+  "median_log10_probability": -0.12048747790708267,
+  "rare_log10_probability": -3.2987594347248095,
+  "threshold_rule": "set by backend/ml/hybrid.py together with the timing model's checks",
+  "threshold_log10_probability": -3.8210778390860196,
+  "validation_flag_rate": 0.0045,
   "transitions": [
     {
       "from_state": "ORDER_CREATED",

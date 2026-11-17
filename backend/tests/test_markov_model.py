@@ -19,13 +19,15 @@ import unittest
 from backend.core.errors import FeatureError, ModelLoadError, TrainError
 from backend.fsm.transitions import TRANSITION_TABLE
 from backend.ml.markov.model import (
-    THRESHOLD_PERCENTILE,
+    RARE_PERCENTILE,
     describe_probability,
     fit_markov_model,
     load_markov_model,
     model_to_dict,
+    path_log10_probability,
     save_markov_model,
     score_trace,
+    with_level_threshold,
 )
 
 HAPPY = ["CONFIRM_PAYMENT", "PACK_ITEMS", "SHIP_ITEMS", "DELIVER_ITEMS"]
@@ -74,10 +76,36 @@ class TestMarkovTraining(unittest.TestCase):
         self.assertEqual(self.model.counts[("PAYMENT_FAILED", "CONFIRM_PAYMENT")], 0)
         self.assertGreater(self.model.probabilities[("PAYMENT_FAILED", "CONFIRM_PAYMENT")], 0.0)
 
-    def test_threshold_is_the_first_percentile_of_validation_paths(self) -> None:
-        self.assertEqual(THRESHOLD_PERCENTILE, 1.0)
+    def test_threshold_starts_at_the_first_percentile_of_validation_paths(self) -> None:
+        self.assertEqual(RARE_PERCENTILE, 1.0)
+        self.assertAlmostEqual(self.model.rare_log10_probability, expected_threshold(), places=12)
         self.assertAlmostEqual(self.model.threshold_log10_probability, expected_threshold(), places=12)
+        self.assertAlmostEqual(self.model.median_log10_probability, LOG_HAPPY, places=12)
+        self.assertEqual(self.model.validation_flag_rate, 0.01)      # 1 of the 100 validation paths is below it
         self.assertEqual((self.model.training_sample_count, self.model.validation_sample_count), (4, 100))
+
+    def test_level_is_zero_at_the_median_and_one_at_the_rare_point(self) -> None:
+        self.assertAlmostEqual(self.model.level(LOG_HAPPY), 0.0, places=12)
+        self.assertAlmostEqual(self.model.level(expected_threshold()), 1.0, places=12)
+        self.assertGreater(self.model.level(LOG_REFUND_AFTER_RETRY), 1.0)
+
+    def test_with_level_threshold_moves_the_threshold_to_that_level(self) -> None:
+        # Level 0.5 is halfway between the median and the rare point.
+        moved = with_level_threshold(self.model, 0.5, VALIDATION)
+        self.assertAlmostEqual(moved.threshold_log10_probability, (LOG_HAPPY + expected_threshold()) / 2, places=12)
+        self.assertAlmostEqual(moved.level(moved.threshold_log10_probability), 0.5, places=12)
+        self.assertEqual(moved.validation_flag_rate, 0.01)
+        self.assertEqual(moved.probabilities, self.model.probabilities)
+        # A level beyond the rarest validation path flags none of them.
+        beyond = self.model.level(LOG_REFUND_AFTER_RETRY) + 0.1
+        self.assertEqual(with_level_threshold(self.model, beyond, VALIDATION).validation_flag_rate, 0.0)
+        with self.assertRaises(TrainError):
+            with_level_threshold(self.model, 0.0, VALIDATION)
+
+    def test_path_log10_probability_matches_score_trace(self) -> None:
+        self.assertAlmostEqual(path_log10_probability(self.model, REFUND_AFTER_RETRY), LOG_REFUND_AFTER_RETRY, places=12)
+        with self.assertRaises(FeatureError):
+            path_log10_probability(self.model, ["CONFIRM_PAYMENT", "SHIP_ITEMS"])
 
 
 class TestMarkovTrainErrors(unittest.TestCase):
@@ -106,6 +134,9 @@ class TestMarkovTrainErrors(unittest.TestCase):
 
     def test_invalid_validation_order(self) -> None:
         self.assert_train_error("SHIP_ITEMS", TRAINING, validation=[HAPPY] * 99 + [["SHIP_ITEMS"]])
+
+    def test_validation_paths_that_are_all_equally_likely_cannot_be_scaled(self) -> None:
+        self.assert_train_error("below the median", TRAINING, validation=[HAPPY] * 100)
 
 
 class TestMarkovScoring(unittest.TestCase):

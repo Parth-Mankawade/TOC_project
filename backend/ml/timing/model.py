@@ -1,8 +1,19 @@
 """Timing-and-amount model (TRAIN / MODEL checkpoints): are this legal order's
-times, amount and outcome unusual together?
+times, amount and outcome far from those of typical normal orders?
 
-The order of events is the Markov chain's job. This model reads the numbers in
-backend/ml/timing/features.py (MODEL_INPUTS) and learns what normal orders look like.
+The order of events is the Markov chain's job. This model runs three checks
+(CHECKS) on the numbers in backend/ml/timing/features.py:
+
+  cluster    a detector fitted on MODEL_INPUTS of normal training orders (one of
+             the candidates below): how far is the order from typical normal orders?
+  trend      were the steps consistently faster, or consistently slower, than normal?
+  deviation  is any value, or are several, far outside its normal range?
+
+trend and deviation come straight from the z-scores (features.timing_summary).
+They were added because the detector alone missed two kinds of order: a distance
+over seven inputs is dominated by the inputs that are normal, so an order whose
+every step is moderately fast, or whose single delivery step is slow, stayed
+below the detector's threshold.
 
 Candidates (PS9 lists Isolation Forest and clustering):
   isolation_forest      IsolationForest, 200 trees: random splits isolate unusual
@@ -13,16 +24,28 @@ Candidates (PS9 lists Isolation Forest and clustering):
                         region than its nearest normal orders is unusual
 
 Inputs are standardized with the training means and standard deviations, so each
-input counts on the same scale. Every candidate gives a raw score where higher
-means more unusual. The threshold is the THRESHOLD_PERCENTILE-th percentile of
-the raw scores of normal validation orders, so about 1 in 100 normal orders is
-flagged.
+input counts on the same scale. Every check gives a raw score where higher means
+more unusual. Raw scores of different checks are not comparable, so each is put
+on a common scale using the normal validation orders (Scale):
 
-    anomaly_score = raw score - threshold     (> 0 means anomaly)
+    level = (raw - median) / (99th percentile - median)
 
-Choosing the candidate the API uses (select_detector): highest F1 on the
-validation split (normal and anomalous validation orders). If a model named in
-PS9 is within NEAR_TIE_F1 of the best, it is preferred, in PS9_PREFERENCE order.
+level 0 is a typical normal order; level 1 is the point only 1 in 100 normal
+orders exceeds. A check flags an order when its level is above the model's
+threshold:
+
+    check score   = level - threshold            (> 0: this check flags the order)
+    anomaly_score = highest check score          (> 0 means anomaly)
+
+A freshly fitted model has threshold 1.0 (each check flags 1% of normal
+validation orders on its own). backend/ml/hybrid.py then sets one threshold for
+these three checks and the Markov chain's path check together, so that all four
+checks combined flag a fixed share of normal validation orders.
+
+Choosing the candidate the API uses (select_detector): highest F1 of the cluster
+check on the validation split, each candidate flagging its most unusual 1% of
+normal validation orders. If a model named in PS9 is within NEAR_TIE_F1 of the
+best, it is preferred, in PS9_PREFERENCE order.
 """
 
 from __future__ import annotations
@@ -51,6 +74,7 @@ from backend.ml.timing.features import (
     fit_feature_stats,
     measurements,
     order_features,
+    timing_summary,
 )
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
@@ -59,7 +83,9 @@ DEFAULT_MODEL_PATH = MODELS_DIR / "timing_model.joblib"
 DETECTOR_NAMES = ["isolation_forest", "kmeans", "local_outlier_factor"]
 PS9_PREFERENCE = ["isolation_forest", "kmeans"]  # named in PS9's list of ML techniques
 NEAR_TIE_F1 = 0.02
-THRESHOLD_PERCENTILE = 99.0   # flag the most unusual 1% of normal validation orders
+CHECKS = ["cluster", "trend", "deviation"]
+SCALE_PERCENTILE = 99.0       # level 1 = the raw score only 1% of normal validation orders exceed
+DEFAULT_THRESHOLD = 1.0       # each check flags its most unusual 1% until hybrid.calibrate() sets a shared threshold
 MIN_VALIDATION_ORDERS = 100
 RANDOM_STATE = 42
 
@@ -70,13 +96,33 @@ KMEANS_SILHOUETTE_SAMPLE = 2_000   # silhouette needs all pairwise distances, so
 KMEANS_INIT_RUNS = 10
 
 
+@dataclass(frozen=True)
+class Scale:
+    """Median and SCALE_PERCENTILE-th percentile of a raw score over normal validation orders."""
+
+    median: float
+    high: float
+
+    @classmethod
+    def fit(cls, raw: Sequence[float], what: str) -> "Scale":
+        median, high = float(np.median(raw)), float(np.percentile(raw, SCALE_PERCENTILE))
+        if not high > median:
+            raise TrainError(f"a {SCALE_PERCENTILE:g}th percentile above the median",
+                             f"median {median}, percentile {high}", f"{what} scores of normal validation orders")
+        return cls(median, high)
+
+    def level(self, raw: Any) -> Any:
+        return (raw - self.median) / (self.high - self.median)
+
+
 @dataclass
 class TimingModel:
     detector_name: str
     detector: Any                 # fitted scikit-learn estimator
     scaler: StandardScaler
     stats: FeatureStats
-    threshold: float
+    scales: Dict[str, Scale]      # one per check in CHECKS
+    threshold: float              # level above which a check flags an order
     detector_params: Dict[str, Any]
     training_sample_count: int
     validation_sample_count: int
@@ -88,7 +134,8 @@ class TimingModel:
 # ---------------------------------------------------------------------------
 
 def _matrix(stats: FeatureStats, orders: Sequence[TimedOrder]) -> np.ndarray:
-    return np.asarray([list(order_features(stats, e, t, a).values()) for e, t, a in orders], dtype=np.float64)
+    rows = [list(order_features(stats, e, t, a).values()) for e, t, a in orders]
+    return np.asarray(rows, dtype=np.float64).reshape(len(rows), len(MODEL_INPUTS))
 
 
 def _training_matrix(stats: FeatureStats, orders: Sequence[TimedOrder], what: str) -> np.ndarray:
@@ -96,6 +143,11 @@ def _training_matrix(stats: FeatureStats, orders: Sequence[TimedOrder], what: st
         return _matrix(stats, orders)
     except FeatureError as exc:
         raise TrainError("valid, complete normal orders", str(exc), what) from exc
+
+
+def _summary_scores(stats: FeatureStats, orders: Sequence[TimedOrder]) -> Dict[str, np.ndarray]:
+    summaries = [timing_summary(stats, e, t, a) for e, t, a in orders]
+    return {name: np.asarray([s[name] for s in summaries], dtype=np.float64) for name in ("trend", "deviation")}
 
 
 def _raw_scores(name: str, detector: Any, X: np.ndarray) -> np.ndarray:
@@ -127,10 +179,13 @@ def _fit_detector(name: str, X: np.ndarray) -> Tuple[Any, Dict[str, Any]]:
 
 def fit_timing_model(train_orders: Sequence[TimedOrder], validation_normal_orders: Sequence[TimedOrder],
                      detector_name: str, stats: Optional[FeatureStats] = None) -> TimingModel:
-    """Fit one candidate on normal training orders; set its threshold on normal validation orders.
+    """Fit one candidate on normal training orders; scale every check on normal validation orders.
+
+    The returned model has threshold DEFAULT_THRESHOLD.
 
     Raises:
-        TrainError: Unknown detector, too few validation orders, or invalid orders.
+        TrainError: Unknown detector, too few validation orders, invalid orders, or a
+            check whose scores on normal validation orders cannot be scaled.
     """
     if detector_name not in DETECTOR_NAMES:
         raise TrainError(f"a detector in {DETECTOR_NAMES}", detector_name, "detector_name")
@@ -139,12 +194,14 @@ def fit_timing_model(train_orders: Sequence[TimedOrder], validation_normal_order
                          len(validation_normal_orders), "fit_timing_model")
     if stats is None:
         stats = fit_feature_stats(train_orders)
-    scaler = StandardScaler().fit(_training_matrix(stats, train_orders, "training orders"))
-    detector, params = _fit_detector(detector_name,
-                                     scaler.transform(_training_matrix(stats, train_orders, "training orders")))
+    train_matrix = _training_matrix(stats, train_orders, "training orders")
+    scaler = StandardScaler().fit(train_matrix)
+    detector, params = _fit_detector(detector_name, scaler.transform(train_matrix))
     validation = scaler.transform(_training_matrix(stats, validation_normal_orders, "validation orders"))
-    threshold = float(np.percentile(_raw_scores(detector_name, detector, validation), THRESHOLD_PERCENTILE))
-    return TimingModel(detector_name, detector, scaler, stats, threshold, params,
+    raw = dict(_summary_scores(stats, validation_normal_orders),
+               cluster=_raw_scores(detector_name, detector, validation))
+    scales = {check: Scale.fit(raw[check], check) for check in CHECKS}
+    return TimingModel(detector_name, detector, scaler, stats, scales, DEFAULT_THRESHOLD, params,
                        len(train_orders), len(validation_normal_orders), sklearn.__version__)
 
 
@@ -152,36 +209,61 @@ def fit_timing_model(train_orders: Sequence[TimedOrder], validation_normal_order
 # Scoring
 # ---------------------------------------------------------------------------
 
-def anomaly_scores(model: TimingModel, orders: Sequence[TimedOrder]) -> np.ndarray:
-    """raw score - threshold for each order; > 0 means anomaly.
+def check_levels(model: TimingModel, orders: Sequence[TimedOrder]) -> Dict[str, np.ndarray]:
+    """The level of every check in CHECKS for each order (0 = typical normal order, 1 = the
+    point 1% of normal validation orders exceed).
 
     Raises:
         FeatureError: If any order cannot be turned into model inputs.
     """
     X = model.scaler.transform(_matrix(model.stats, orders))
-    return _raw_scores(model.detector_name, model.detector, X) - model.threshold
+    raw = dict(_summary_scores(model.stats, orders), cluster=_raw_scores(model.detector_name, model.detector, X))
+    return {check: model.scales[check].level(raw[check]) for check in CHECKS}
+
+
+def detector_scores(model: TimingModel, orders: Sequence[TimedOrder]) -> np.ndarray:
+    """The cluster check on its own: level - 1, so > 0 means more unusual than 99% of
+    normal validation orders. Used to compare candidates; independent of the threshold."""
+    return check_levels(model, orders)["cluster"] - DEFAULT_THRESHOLD
+
+
+def anomaly_scores(model: TimingModel, orders: Sequence[TimedOrder]) -> np.ndarray:
+    """Highest check level - threshold for each order; > 0 means anomaly.
+
+    Raises:
+        FeatureError: If any order cannot be turned into model inputs.
+    """
+    levels = check_levels(model, orders)
+    return np.max([levels[check] for check in CHECKS], axis=0) - model.threshold
 
 
 def score_order(model: TimingModel, events: Sequence[str], timestamps: Sequence[Any], amount: float) -> Dict[str, Any]:
     """Score one FSM-valid, complete order.
 
     Returns:
-        prediction ("NORMAL"/"ANOMALY"), is_timing_anomaly, anomaly_score, model_name,
-        inputs (the model inputs) and measurements (amount, failed payments and every
-        step duration, each with its normal range and percentile among normal orders).
+        prediction ("NORMAL"/"ANOMALY"), is_timing_anomaly, anomaly_score (highest check
+        score), model_name, checks (name, score and is_flagged for each check in CHECKS),
+        trend_z (signed: negative = steps faster than normal overall), inputs (the
+        detector's inputs) and measurements (amount, failed payments and every step
+        duration, each with its normal range and percentile among normal orders).
 
     Raises:
         FeatureError: Bad amount, timestamps or order.
     """
-    inputs = order_features(model.stats, events, timestamps, amount)
-    X = model.scaler.transform(np.asarray([list(inputs.values())], dtype=np.float64))
-    score = float(_raw_scores(model.detector_name, model.detector, X)[0]) - model.threshold
+    levels = check_levels(model, [(events, timestamps, amount)])
+    checks = []
+    for check in CHECKS:
+        check_score = float(levels[check][0]) - model.threshold
+        checks.append({"name": check, "score": check_score, "is_flagged": check_score > 0})
+    score = max(c["score"] for c in checks)
     return {
         "prediction": "ANOMALY" if score > 0 else "NORMAL",
         "is_timing_anomaly": score > 0,
         "anomaly_score": score,
         "model_name": model.detector_name,
-        "inputs": inputs,
+        "checks": checks,
+        "trend_z": timing_summary(model.stats, events, timestamps, amount)["trend_z"],
+        "inputs": order_features(model.stats, events, timestamps, amount),
         "measurements": measurements(model.stats, events, timestamps, amount),
     }
 
@@ -218,8 +300,8 @@ def validation_report(models: Dict[str, TimingModel], validation_normal_orders: 
     y_true = [0] * len(validation_normal_orders) + [1] * len(validation_anomalies)
     candidates: Dict[str, Dict[str, Any]] = {}
     for name, model in models.items():
-        flags_normal = anomaly_scores(model, validation_normal_orders) > 0
-        flags_anomaly = anomaly_scores(model, validation_anomalies) > 0
+        flags_normal = detector_scores(model, validation_normal_orders) > 0
+        flags_anomaly = detector_scores(model, validation_anomalies) > 0
         y_pred = [int(f) for f in flags_normal] + [int(f) for f in flags_anomaly]
         candidates[name] = {
             "f1": float(f1_score(y_true, y_pred, zero_division=0)),
@@ -231,9 +313,9 @@ def validation_report(models: Dict[str, TimingModel], validation_normal_orders: 
     return {
         "split": "validation",
         "metric": "f1",
-        "rule": f"highest validation F1; a model named in PS9 ({', '.join(PS9_PREFERENCE)}) "
-                f"within {NEAR_TIE_F1} of the best is preferred",
-        "threshold_percentile": THRESHOLD_PERCENTILE,
+        "rule": f"highest validation F1 of the cluster check; a model named in PS9 "
+                f"({', '.join(PS9_PREFERENCE)}) within {NEAR_TIE_F1} of the best is preferred",
+        "threshold_percentile": SCALE_PERCENTILE,
         "normal_orders": len(validation_normal_orders),
         "anomalous_orders": len(validation_anomalies),
         "candidates": candidates,
@@ -270,8 +352,10 @@ def model_metadata(model: TimingModel) -> Dict[str, Any]:
         "model_name": model.detector_name,
         "detector_params": model.detector_params,
         "model_inputs": list(MODEL_INPUTS),
+        "checks": {check: {"median": model.scales[check].median, "high": model.scales[check].high}
+                   for check in CHECKS},
+        "scale_percentile": SCALE_PERCENTILE,
         "threshold": model.threshold,
-        "threshold_percentile": THRESHOLD_PERCENTILE,
         "normal_band_percentiles": list(NORMAL_BAND),
         "training_sample_count": model.training_sample_count,
         "validation_sample_count": model.validation_sample_count,
@@ -327,6 +411,11 @@ def load_timing_model(path: Optional[Union[str, Path]] = None) -> TimingModel:
         failure_counts={int(k): int(n) for k, n in meta["failure_counts"].items()},
         training_sample_count=int(meta["training_sample_count"]),
     )
-    return TimingModel(meta["model_name"], payload["detector"], payload["scaler"], stats, float(meta["threshold"]),
-                       dict(meta["detector_params"]), int(meta["training_sample_count"]),
+    if sorted(meta.get("checks", {})) != sorted(CHECKS):
+        raise ModelLoadError(f"scales for the checks {CHECKS} (an older model file? retrain with "
+                             "python -m backend.ml.pipeline)", sorted(meta.get("checks", {})), str(target))
+    scales = {check: Scale(float(meta["checks"][check]["median"]), float(meta["checks"][check]["high"]))
+              for check in CHECKS}
+    return TimingModel(meta["model_name"], payload["detector"], payload["scaler"], stats, scales,
+                       float(meta["threshold"]), dict(meta["detector_params"]), int(meta["training_sample_count"]),
                        int(meta["validation_sample_count"]), meta["sklearn_version"])

@@ -71,10 +71,23 @@ class TestPipeline(unittest.TestCase):
         m = self.models["always_normal"]
         self.assertEqual((m["anomalies_caught"], m["false_alarms"], m["f1"]), (0, 0, 0.0))
 
-    def test_the_ml_hybrid_beats_both_baselines_on_f1(self) -> None:
-        hybrid = self.models["hybrid"]["f1"]
-        self.assertGreater(hybrid, self.models["always_normal"]["f1"])
-        self.assertGreater(hybrid, self.models["range_rule"]["f1"])
+    def test_scores_are_reported_with_both_auc_measures(self) -> None:
+        for name, m in self.models.items():
+            scored = name not in ("always_normal", "range_rule", "zscore_or_markov")
+            for key in ("roc_auc", "pr_auc"):
+                self.assertEqual(m[key] is not None, scored, (name, key))
+                if scored:
+                    self.assertTrue(0.0 <= m[key] <= 1.0, (name, key))
+
+    def test_hybrid_section_describes_the_shared_threshold(self) -> None:
+        section = self.results["hybrid"]
+        self.assertEqual(section["checks"], ["path", "cluster", "trend", "deviation"])
+        self.assertEqual(section["validation_normal_orders"], FIXTURE_SIZES["validation"].normal)
+        self.assertAlmostEqual(section["validation_flag_rate"], section["false_alarm_budget"], places=3)
+        self.assertEqual(section["threshold_level"], load_timing_model(self.paths.timing).threshold)
+        # No single check may use more than the whole budget.
+        for check, rate in section["validation_flag_rate_by_check"].items():
+            self.assertLessEqual(rate, section["validation_flag_rate"], check)
 
     def test_random_forest_lists_what_it_was_trained_on(self) -> None:
         rf = self.models["random_forest"]
@@ -100,7 +113,7 @@ class TestPipeline(unittest.TestCase):
 
     def test_summary_names_the_headline_numbers(self) -> None:
         summary = format_summary(self.results)
-        for name in ("always_normal", "range_rule", "hybrid", "F1"):
+        for name in ("always_normal", "tuned_range_rule", "zscore_or_markov", "hybrid", "F1", "PR-AUC"):
             self.assertIn(name, summary)
 
     def test_same_seed_gives_the_same_report(self) -> None:

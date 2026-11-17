@@ -16,6 +16,7 @@ from backend.pipeline.analyzer import (
     TIMING_SKIPPED_NO_DATA,
     analyze_trace,
     describe_measurement,
+    timing_causes,
     timing_reasons,
 )
 from backend.tests.fixtures import HAPPY, trained
@@ -173,17 +174,75 @@ class TestExplanations(unittest.TestCase):
         cheap = describe_measurement(self.measurement("currency", 40.0, 0.5, unusual=True))
         self.assertIn("lower than 99.5% of normal orders", cheap)
 
-    def test_a_combination_is_explained_when_no_single_value_is_unusual(self) -> None:
+    def test_the_furthest_values_are_listed_when_no_single_value_is_unusual(self) -> None:
         timing = {"is_timing_anomaly": True, "measurements": [
             self.measurement("currency", 4_000.0, 96.0),
             self.measurement("seconds", 2_000.0, 4.0, step=2),
             self.measurement("seconds", 9_000.0, 60.0, step=3),
         ]}
         reasons = timing_reasons(timing)
-        self.assertIn("combination", reasons[0])
+        self.assertIn("No single value", reasons[0])
+        self.assertNotIn("together", " ".join(reasons))
         self.assertIn("higher than 96.0% of normal orders", reasons[1])
         self.assertIn("faster than 96.0% of normal orders", reasons[2])
         self.assertEqual(len(reasons), 3)  # the 60th-percentile step is not a reason
+
+    def checks(self, **scores: float):
+        return [{"name": name, "score": score, "is_flagged": score > 0} for name, score in scores.items()]
+
+    def test_each_flagged_timing_check_gives_its_own_cause(self) -> None:
+        only_trend = {"checks": self.checks(cluster=-0.4, trend=0.3, deviation=-0.1), "trend_z": -3.6}
+        self.assertEqual(timing_causes(only_trend), ["its steps were consistently faster than normal"])
+        slow = dict(only_trend, trend_z=3.1)
+        self.assertEqual(timing_causes(slow), ["its steps were consistently slower than normal"])
+        all_three = {"checks": self.checks(cluster=0.2, trend=0.3, deviation=0.9), "trend_z": 2.0}
+        causes = timing_causes(all_three)
+        self.assertEqual(len(causes), 3)
+        self.assertIn("far from those of typical normal orders", causes[0])
+        self.assertIn("far outside their normal range", causes[2])
+        self.assertEqual(timing_causes({"checks": self.checks(cluster=-1.0, trend=-1.0, deviation=-1.0),
+                                        "trend_z": 0.1}), [])
+
+
+class TestTimingExplanationsOnRealOrders(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.t = trained()
+        cls.results = [(o, analyze_trace(o.events, stamps_of(o), o.amount, models=cls.t))
+                       for o in cls.t.orders if o.split == "test" and o.is_anomaly]
+
+    def flagged_by(self, check: str, anomaly_type: str):
+        for order, result in self.results:
+            timing = result["timing_evaluation"]
+            if order.anomaly_type == anomaly_type and any(c["name"] == check and c["is_flagged"] for c in timing["checks"]):
+                return result
+        self.fail(f"no test order of type {anomaly_type} is flagged by the {check} check")
+
+    def test_fast_fulfilment_is_explained_as_consistently_faster(self) -> None:
+        result = self.flagged_by("trend", "FAST_FULFILMENT")
+        self.assertEqual(result["verdict"], "STATISTICAL_ANOMALY")
+        self.assertLess(result["timing_evaluation"]["trend_z"], 0)
+        self.assertIn("consistently faster than normal", result["summary"])
+        self.assertIn("ran faster than normal", " ".join(result["diagnostics"]["key_factors"]))
+
+    def test_stalled_delivery_names_the_slow_delivery_step(self) -> None:
+        result = self.flagged_by("deviation", "STALLED_DELIVERY")
+        self.assertIn("far outside their normal range", result["summary"])
+        factors = " ".join(result["diagnostics"]["key_factors"])
+        self.assertIn("SHIP_ITEMS -> DELIVER_ITEMS", factors)
+        self.assertIn("slower than", factors)
+
+    def test_every_check_score_is_listed_and_no_text_claims_a_joint_effect(self) -> None:
+        for _, result in self.results:
+            text = " ".join([result["summary"], result["diagnostics"]["root_cause"]]
+                            + result["diagnostics"]["key_factors"])
+            for label in ("Cluster check", "Trend check", "Deviation check"):
+                self.assertIn(label, text)
+            self.assertNotIn("unusual together", text)
+            self.assertNotIn("combination", text)
+            timing = result["timing_evaluation"]
+            self.assertEqual(timing["anomaly_score"], max(c["score"] for c in timing["checks"]))
 
 
 if __name__ == "__main__":

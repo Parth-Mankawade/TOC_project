@@ -48,12 +48,12 @@ class TestEndToEnd(unittest.TestCase):
                 ready = client.get("/api/v1/health/ready").json()
                 self.assertEqual(ready["timing_model"]["model_name"], results["model_selection"]["chosen"])
 
-                # 2. The report the dashboard shows is the pipeline's report, and ML beats both baselines.
+                # 2. The report the dashboard shows is the pipeline's report, and the hybrid beats every baseline.
                 report = client.get("/api/v1/models").json()["evaluation"]
                 self.assertEqual(report, results)
                 head = report["headline"]
-                self.assertGreater(head["hybrid"], head["range_rule"])
-                self.assertGreater(head["hybrid"], head["always_normal"])
+                for baseline in ("always_normal", "range_rule", "tuned_range_rule", "zscore_or_markov"):
+                    self.assertGreater(head["hybrid"], head[baseline], baseline)
 
                 # 3. Load the demo orders; each verdict fits how the order was generated.
                 demo = client.get("/api/v1/demo").json()["orders"]

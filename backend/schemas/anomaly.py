@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from backend.ml.timing.features import MODEL_INPUTS as TIMING_MODEL_INPUTS
 from backend.ml.timing.features import NORMAL_BAND
+from backend.ml.timing.model import CHECKS as TIMING_CHECKS
 from backend.ml.timing.model import DETECTOR_NAMES
 
 # Supported domain taxonomies
@@ -86,7 +87,8 @@ class MlEvaluationSchema(BaseModel):
     is_ml_anomaly: bool = Field(..., description="True if statistical anomaly, False if normal")
     anomaly_score: float = Field(
         ...,
-        description="threshold - log10 P(path); positive means anomaly, each +1 is 10x rarer than the threshold",
+        description="threshold - log10 P(path); positive means anomaly, each +1 is 10x rarer than the threshold. "
+                    "The threshold is shared with the timing model's checks (one false-alarm budget for all).",
     )
     path_log10_probability: float = Field(..., le=0.0, description="log10 of the path probability")
     transitions: List[TransitionProbabilitySchema] = Field(
@@ -151,13 +153,36 @@ class TimingMeasurementSchema(BaseModel):
         return self
 
 
+class TimingCheckSchema(BaseModel):
+    """One of the timing model's checks on an order."""
+
+    name: str = Field(..., description=f"One of {TIMING_CHECKS}")
+    score: float = Field(..., description="level - threshold, where level 0 is a typical normal order and level 1 "
+                                          "the point 1% of normal validation orders exceed; positive means flagged")
+    is_flagged: bool
+
+    @field_validator("score", mode="before")
+    @classmethod
+    def validate_score(cls, v: Any) -> float:
+        return _strict_finite_float(v, "score")
+
+    @model_validator(mode="after")
+    def validate_consistency(self) -> TimingCheckSchema:
+        if self.is_flagged != (self.score > 0.0):
+            raise ValueError("Inconsistent timing check: score must be > 0 exactly when is_flagged is true.")
+        return self
+
+
 class TimingEvaluationSchema(BaseModel):
     """Timing-and-amount model results on the order's times, amount and outcome."""
 
     prediction: Literal["NORMAL", "ANOMALY"]
     is_timing_anomaly: bool
-    anomaly_score: float = Field(..., description="raw score - threshold; positive means anomaly")
-    model_name: str = Field(..., description=f"Which candidate scored the order: one of {DETECTOR_NAMES}")
+    anomaly_score: float = Field(..., description="The highest check score; positive means anomaly")
+    model_name: str = Field(..., description=f"The detector behind the cluster check: one of {DETECTOR_NAMES}")
+    checks: List[TimingCheckSchema] = Field(..., description=f"One entry per check, in the order {TIMING_CHECKS}")
+    trend_z: float = Field(..., description="Sum of the step z-scores / sqrt(number of steps); negative means the "
+                                            "steps were faster than normal overall")
     inputs: Dict[str, float] = Field(..., description=f"The numbers the model scored: {TIMING_MODEL_INPUTS}")
     measurements: List[TimingMeasurementSchema] = Field(..., min_length=2)
 
@@ -168,10 +193,10 @@ class TimingEvaluationSchema(BaseModel):
             raise ValueError(f"'model_name' must be one of {DETECTOR_NAMES}, got {v!r}.")
         return v
 
-    @field_validator("anomaly_score", mode="before")
+    @field_validator("anomaly_score", "trend_z", mode="before")
     @classmethod
-    def validate_score(cls, v: Any) -> float:
-        return _strict_finite_float(v, "anomaly_score")
+    def validate_score(cls, v: Any, info) -> float:
+        return _strict_finite_float(v, info.field_name)
 
     @field_validator("inputs", mode="before")
     @classmethod
@@ -186,6 +211,10 @@ class TimingEvaluationSchema(BaseModel):
             raise ValueError("Inconsistent timing evaluation: prediction and is_timing_anomaly disagree.")
         if self.is_timing_anomaly != (self.anomaly_score > 0.0):
             raise ValueError("Inconsistent timing evaluation: anomaly_score must be > 0 exactly for ANOMALY.")
+        if [c.name for c in self.checks] != TIMING_CHECKS:
+            raise ValueError(f"'checks' must be exactly {TIMING_CHECKS} in that order.")
+        if not math.isclose(self.anomaly_score, max(c.score for c in self.checks), rel_tol=1e-9, abs_tol=1e-9):
+            raise ValueError("Inconsistent timing evaluation: anomaly_score must equal the highest check score.")
         return self
 
 

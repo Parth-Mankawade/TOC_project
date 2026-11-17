@@ -21,8 +21,22 @@
     "refunded",
     "cancelled"
   ],
-  "threshold": 4.340968579459933,
-  "threshold_percentile": 99.0,
+  "checks": {
+    "cluster": {
+      "median": 1.443048629445973,
+      "high": 4.340968579459933
+    },
+    "trend": {
+      "median": 0.6800634484014041,
+      "high": 2.71457028438076
+    },
+    "deviation": {
+      "median": 0.3043284341629916,
+      "high": 1.9505787908396899
+    }
+  },
+  "scale_percentile": 99.0,
+  "threshold": 1.1643403747249452,
   "normal_band_percentiles": [
     2.5,
     97.5
