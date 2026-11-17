@@ -20,7 +20,9 @@ How the comparison is kept fair:
     anomaly type and counts how many orders of that type it still catches.
 
 Methods:
-  previous_hybrid          the model this replaced: Markov chain OR the cluster detector
+  previous_hybrid          the model this replaced, with its exact decision rule: Markov chain
+                           (threshold - log10 P(path) > 0, threshold = 1st percentile) OR the
+                           cluster detector (raw score - 99th percentile > 0)
   tuned_range_rule         see evaluate.py
   zscore_or_markov         see evaluate.py
   hybrid                   the four checks under one threshold (what the app uses)
@@ -46,13 +48,14 @@ from backend.ml.dataset.generator import ANOMALY_TYPES, SPLIT_SIZES, SplitSize, 
 from backend.ml.dataset.loader import OrderRecord
 from backend.ml.evaluation import experiments
 from backend.ml.evaluation.evaluate import cutoff, fit_tuned_range_rule, metrics, sum_squared_z, timed
-from backend.ml.markov.model import fit_markov_model
+from backend.ml.markov.model import fit_markov_model, score_trace
 from backend.ml.timing.model import (
     DETECTOR_NAMES,
     SCALE_PERCENTILE,
     Scale,
     check_levels,
     choose_detector,
+    cluster_raw_scores,
     fit_candidates,
     validation_report,
 )
@@ -120,10 +123,14 @@ def run_seed(seed: int, sizes: Mapping[str, SplitSize] = SPLIT_SIZES,
     def fused(name: str, validation_parts: Sequence[np.ndarray], test_parts: Sequence[np.ndarray]) -> None:
         single_score(name, np.max(validation_parts, axis=0), np.max(test_parts, axis=0))
 
-    # The model this branch replaced: each part flags its own 1%, verdict = OR.
-    results["previous_hybrid"] = _both("previous_hybrid", data,
-                                       (v_levels["path"] > 1) | (v_levels["cluster"] > 1),
-                                       (t_levels["path"] > 1) | (t_levels["cluster"] > 1))
+    # The model this branch replaced: each part flags its own 1%, verdict = OR. The same arithmetic as
+    # the earlier code (main), so that orders lying exactly on a threshold are decided the same way.
+    def previous(rows: List[OrderRecord]) -> np.ndarray:
+        path = np.asarray([score_trace(markov, o.events)["is_ml_anomaly"] for o in rows])
+        cluster = cluster_raw_scores(timing, timed(rows)) - timing.scales["cluster"].high > 0
+        return path | cluster
+
+    results["previous_hybrid"] = _both("previous_hybrid", data, previous(validation), previous(data.test))
 
     # Baselines.
     tuned = fit_tuned_range_rule(data.train)
@@ -231,6 +238,7 @@ def _summarise(runs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """Mean and standard deviation over seeds of one method's metrics on one split."""
     summary: Dict[str, Any] = {metric: _mean_std([run[metric] for run in runs]) for metric in METRICS}
     summary["f1_by_seed"] = [run["f1"] for run in runs]
+    summary["false_alarm_rate_by_seed"] = [run["false_alarm_rate"] for run in runs]
     summary["caught_by_type"] = {
         t: {"mean": round(float(np.mean([run["caught_by_type"][t]["caught"] for run in runs])), 2),
             "total": runs[0]["caught_by_type"][t]["total"]}

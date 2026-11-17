@@ -364,7 +364,7 @@ One seed can be lucky, so `benchmark.py` generates five datasets and repeats eve
 <!-- generated:seeds-test:start -->
 | Method | F1 | Precision | Recall | False-alarm rate | ROC-AUC | PR-AUC |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Before: Markov chain OR k-means | 0.533 ± 0.039 | 0.597 ± 0.043 | 0.487 ± 0.063 | 0.0167 ± 0.0037 | – | – |
+| Before: Markov chain OR k-means | 0.533 ± 0.039 | 0.591 ± 0.040 | 0.492 ± 0.068 | 0.0173 ± 0.0038 | – | – |
 | Baseline: tuned range rule | 0.444 ± 0.038 | 0.528 ± 0.048 | 0.386 ± 0.044 | 0.0175 ± 0.0035 | 0.898 ± 0.012 | 0.421 ± 0.045 |
 | Baseline: z-score sum OR Markov chain | 0.526 ± 0.041 | 0.585 ± 0.041 | 0.481 ± 0.059 | 0.0172 ± 0.0033 | – | – |
 | **After: hybrid (four checks, one threshold)** | **0.603 ± 0.035** | 0.626 ± 0.027 | 0.586 ± 0.062 | 0.0176 ± 0.0026 | 0.940 ± 0.008 | 0.626 ± 0.052 |
@@ -386,7 +386,7 @@ Mean number caught per type:
 <!-- generated:seeds-test-by-type:start -->
 | Method (mean caught of 50) | Card testing | Repeated failure | Fast fulfilment | Stalled delivery | High-value refund |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Before: Markov chain OR k-means | 39.4 | 34.2 | 16.8 | 3.2 | 28.2 |
+| Before: Markov chain OR k-means | 40.0 | 34.8 | 16.8 | 3.2 | 28.2 |
 | Baseline: tuned range rule | 31.0 | 28.2 | 12.4 | 24.8 | 0.2 |
 | Baseline: z-score sum OR Markov chain | 37.8 | 35.6 | 22.2 | 14.6 | 10.0 |
 | **After: hybrid (four checks, one threshold)** | 37.4 | 32.2 | 37.2 | 15.6 | 24.0 |
@@ -427,7 +427,14 @@ Mean number caught per type:
 <!-- generated:not-adopted:end -->
 
 None of these beat the hybrid on the validation split, which is where such choices are made, so none
-is in the app. `IMPROVEMENTS.md` has the detail, including what stacking catches of a type it was
+is in the app.
+
+**Say this if asked how the checks were chosen.** The trend and deviation checks were added after
+seeing, on validation data, that fast fulfilment and stalled delivery were mostly missed. The trend
+check is close to the ideal test for how the generator builds fast fulfilment (every step about two
+standard deviations faster), and the z-scores assume log-normal times, which is how the generator
+draws them. So part of the gain measures fit to the simulator; on real logs it could be smaller. A
+delivery four times slower than normal, with every other step ordinary, is not flagged. `IMPROVEMENTS.md` has the detail, including what stacking catches of a type it was
 never shown.
 
 How to read this:

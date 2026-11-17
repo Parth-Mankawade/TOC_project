@@ -26,7 +26,9 @@ Reproduce (about 3 minutes; reads and writes nothing else in the repository):
 
 ## 1. Before and after, with fair baselines
 
-- **Before**: the model on `main`. Markov chain OR k-means, each flagging its own most unusual 1%.
+- **Before**: the model on `main`. Markov chain OR k-means, each flagging its own most unusual 1%,
+  with main's exact decision rule (an order lying exactly on a threshold is decided the same way).
+  Its numbers match `main` trained on the same seeds.
 - **Tuned range rule** (no ML): every measurement gets a band of equal tail share among normal
   training orders; the band width is set on validation data to the 1.5% budget.
 - **z-score sum OR Markov chain** (no fitted detector): sum of squared z-scores flagging its top 1%,
@@ -38,7 +40,7 @@ Test split, mean ± standard deviation over the five seeds:
 <!-- generated:seeds-test:start -->
 | Method | F1 | Precision | Recall | False-alarm rate | ROC-AUC | PR-AUC |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Before: Markov chain OR k-means | 0.533 ± 0.039 | 0.597 ± 0.043 | 0.487 ± 0.063 | 0.0167 ± 0.0037 | – | – |
+| Before: Markov chain OR k-means | 0.533 ± 0.039 | 0.591 ± 0.040 | 0.492 ± 0.068 | 0.0173 ± 0.0038 | – | – |
 | Baseline: tuned range rule | 0.444 ± 0.038 | 0.528 ± 0.048 | 0.386 ± 0.044 | 0.0175 ± 0.0035 | 0.898 ± 0.012 | 0.421 ± 0.045 |
 | Baseline: z-score sum OR Markov chain | 0.526 ± 0.041 | 0.585 ± 0.041 | 0.481 ± 0.059 | 0.0172 ± 0.0033 | – | – |
 | **After: hybrid (four checks, one threshold)** | **0.603 ± 0.035** | 0.626 ± 0.027 | 0.586 ± 0.062 | 0.0176 ± 0.0026 | 0.940 ± 0.008 | 0.626 ± 0.052 |
@@ -49,7 +51,7 @@ Validation split (the one decisions were made on):
 <!-- generated:seeds-validation:start -->
 | Method | F1 | Precision | Recall | False-alarm rate | ROC-AUC | PR-AUC |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Before: Markov chain OR k-means | 0.540 ± 0.053 | 0.615 ± 0.030 | 0.486 ± 0.078 | 0.0152 ± 0.0021 | – | – |
+| Before: Markov chain OR k-means | 0.543 ± 0.052 | 0.606 ± 0.024 | 0.494 ± 0.074 | 0.0159 ± 0.0012 | – | – |
 | Baseline: tuned range rule | 0.487 ± 0.041 | 0.585 ± 0.024 | 0.418 ± 0.048 | 0.0147 ± 0.0004 | 0.910 ± 0.011 | 0.467 ± 0.048 |
 | Baseline: z-score sum OR Markov chain | 0.546 ± 0.046 | 0.598 ± 0.022 | 0.504 ± 0.065 | 0.0168 ± 0.0008 | – | – |
 | **After: hybrid (four checks, one threshold)** | **0.642 ± 0.043** | 0.672 ± 0.021 | 0.616 ± 0.063 | 0.0149 ± 0.0002 | 0.946 ± 0.006 | 0.665 ± 0.037 |
@@ -73,7 +75,7 @@ The hybrid is above the earlier model and above both baselines on each of the fi
 <!-- generated:seeds-test-by-type:start -->
 | Method (mean caught of 50) | Card testing | Repeated failure | Fast fulfilment | Stalled delivery | High-value refund |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| Before: Markov chain OR k-means | 39.4 | 34.2 | 16.8 | 3.2 | 28.2 |
+| Before: Markov chain OR k-means | 40.0 | 34.8 | 16.8 | 3.2 | 28.2 |
 | Baseline: tuned range rule | 31.0 | 28.2 | 12.4 | 24.8 | 0.2 |
 | Baseline: z-score sum OR Markov chain | 37.8 | 35.6 | 22.2 | 14.6 | 10.0 |
 | **After: hybrid (four checks, one threshold)** | 37.4 | 32.2 | 37.2 | 15.6 | 24.0 |
@@ -116,8 +118,8 @@ The hybrid with one check removed (each variant re-thresholded to the same budge
 | Hybrid without the deviation check | 38.4 | 33.2 | 40.4 | 8.2 | 26.2 |
 <!-- generated:ablations-by-type:end -->
 
-Read with care: the cluster and deviation checks each add about 0.01–0.02 F1, which is smaller than
-the spread between seeds. They are kept because the validation mean is higher with them and because
+Read with care: on validation, the cluster check adds 0.020 F1 and the deviation check 0.010, both
+smaller than the spread between seeds. They are kept because the validation mean is higher with them and because
 each covers a type the others do not (high-value refunds, stalled deliveries).
 
 ### Tried and not adopted
@@ -171,8 +173,8 @@ time without one anomaly type, and scored on that type in the test split:
 | High-value refund | 26.6 | 23.6 | 24.0 |
 <!-- generated:leave-one-type-out:end -->
 
-Left out of fitting, stalled delivery drops to about a third of what the label-free hybrid catches,
-and fast fulfilment drops clearly too. A stacked model learns which checks mattered for the types it
+Left out of fitting, stalled delivery drops to 4.8 of 50, against 15.6 for the label-free hybrid,
+and fast fulfilment drops from 31.0 to 25.8. A stacked model learns which checks mattered for the types it
 was shown. That is the reason it is not used, more than its F1.
 
 ## 5. Tests that guard quality
@@ -184,11 +186,25 @@ was shown. That is the reason it is not used, more than its F1.
     own checks alone, and keep its false-alarm rate under twice the budget;
   - the fitting functions must receive only train and validation orders;
   - the saved models must not change when the test split is generated differently.
-- These were checked by breaking the models on purpose: with the detector returning random scores,
-  2 of these tests fail; with the Markov chain returning random probabilities, 5 fail; with random
-  trend and deviation scores, 8 fail. (Before this branch, a random k-means passed every test.)
+  - the Markov chain's path probabilities must match how often each path occurs among normal
+    validation orders (rank correlation above 0.85, mean error below 0.3 in log10). The ROC-AUC test
+    alone cannot catch a chain with wrong probabilities: any chain makes long failure loops rare.
+- These were checked by breaking the models on purpose in a separate copy of the repository and
+  running the whole backend suite (numbers measured, not generated):
+  - k-means returning random scores: 2 tests fail (on `main` the same change passed every test);
+  - all three detector candidates returning random scores: 1 test fails, because the validation rule
+    then picks whichever random detector looks best, and the other three checks still work;
+  - the Markov chain with random transition probabilities: 9 tests fail, the 8 hand-calculation tests
+    of the chain and the path-frequency quality test;
+  - trend and deviation returning random scores: 13 tests fail, 8 of them quality tests;
+  - every timing check constant, or an infinite threshold: training stops with an error;
+  - a huge finite threshold (nothing flagged): 40 tests fail.
+  An earlier version of this file said "random probabilities → 5 failures". That was measured by
+  patching a helper function, not the probabilities, and no quality test caught real random
+  probabilities. The path-frequency test above was added for that.
 - `backend/tests/test_hybrid_model.py`: the shared threshold meets the budget and both model files
-  hold the same threshold.
+  hold the same threshold. It flags at most the budget plus one order, and fewer only when a group of
+  orders with exactly the same level (same path) would push it over.
 - `backend/tests/test_docs.py`: the result tables in `README.md`, `docs/VIVA_GUIDE.md` and this file
   match `results.json` and `benchmark.json`.
 
@@ -203,9 +219,30 @@ was shown. That is the reason it is not used, more than its F1.
 - The dashboard shows the three check scores on a result, and the tuned baselines and PR-AUC on the
   *Models & results* page.
 - The saved model files and `results.json` were regenerated. **A database file from before this
-  branch holds analyses in the old format: delete `backend\toc_workflow.db` once** (it is recreated
-  empty), otherwise the History page reports a validation error for the old rows.
+  branch holds analyses in the old format.** The server now refuses to start on it and says so:
+  `[STORAGE] expected analyses stored by the current model version (an older database file: stop the
+  server, delete it and start again; it is recreated empty), got N record(s) …`. Delete
+  `backend\toc_workflow.db` once. The same applies when switching back to `main`: the two branches
+  should not share a database file.
 - `scipy` is now listed in `backend/requirements.txt` (scikit-learn already installed it).
+
+## How the two new checks were designed (read this before quoting the gain)
+
+The trend and deviation checks were added **after** looking at which anomaly types the earlier model
+missed on the validation split: fast fulfilment and stalled delivery. They are general in form ("were
+the steps consistently fast or slow?", "is any value far outside its normal range?"), but they were
+chosen with the generator in mind:
+
+- `generator.py` makes fast fulfilment by making every step about two standard deviations faster on a
+  log scale. The trend check, the sum of the step z-scores divided by √(number of steps), is close to
+  the best possible test for exactly that pattern.
+- The z-scores assume that waiting times are log-normal, which is how the generator draws them.
+
+So part of the gain measures how well the checks fit the simulator. On real order logs, where times
+are not log-normal and anomalies are not built this way, the gain could be smaller. The checks also
+have limits the tables do not show: a single delivery that takes four times longer than normal, with
+every other step ordinary, is **not** flagged (the deviation check spreads its attention over every
+value of the order).
 
 ## 7. Things to know
 
@@ -219,11 +256,12 @@ was shown. That is the reason it is not used, more than its F1.
 ## Verdict
 
 The hybrid is a real but moderate improvement. On five seeds its test F1 is higher than the earlier
-model's on every seed, by roughly twice the spread between seeds, at about the same false-alarm rate,
-and it is above both fair baselines on every seed as well. Almost all of the gain comes from two
-simple checks computed from z-scores, not from a better learned model: the trend check lifts fast
-fulfilment from about a third caught to about three quarters, and the deviation check lifts stalled
-delivery from almost none to about a third. The learned parts changed little, and two of the ideas
+model's on every seed, by 0.070 on average (at least 0.050), at about the same false-alarm rate, and
+it is above both fair baselines on every seed as well. Almost all of the gain comes from two simple
+checks computed from z-scores, not from a better learned model: fast fulfilment goes from 16.8 to
+37.2 caught of 50, and stalled delivery from 3.2 to 15.6. Those two checks were designed knowing how
+the generator builds these anomalies (see "How the two new checks were designed"), so the gain on
+real data could be smaller. The learned parts changed little, and two of the ideas
 aimed at them (a retry-aware Markov chain, more detector inputs) made things slightly worse. It still
 fails on most stalled deliveries and about half of the high-value refunds, it gave up a few catches
 on the three types the earlier model was better at, and the k-means check adds little that the other

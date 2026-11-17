@@ -221,6 +221,11 @@ def check_levels(model: TimingModel, orders: Sequence[TimedOrder]) -> Dict[str, 
     return {check: model.scales[check].level(raw[check]) for check in CHECKS}
 
 
+def cluster_raw_scores(model: TimingModel, orders: Sequence[TimedOrder]) -> np.ndarray:
+    """The detector's own score before scaling (higher = more unusual)."""
+    return _raw_scores(model.detector_name, model.detector, model.scaler.transform(_matrix(model.stats, orders)))
+
+
 def detector_scores(model: TimingModel, orders: Sequence[TimedOrder]) -> np.ndarray:
     """The cluster check on its own: level - 1, so > 0 means more unusual than 99% of
     normal validation orders. Used to compare candidates; independent of the threshold."""
